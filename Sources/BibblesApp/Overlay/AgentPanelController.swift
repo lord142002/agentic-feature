@@ -292,6 +292,11 @@ private struct ScreenAgentCardView: View {
                     .font(.system(size: 14, weight: .medium)).foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
+                    if let file = session.savedFile {
+                        cardButton("Show in Finder", prominent: false) {
+                            NSWorkspace.shared.activateFileViewerSelecting([file])
+                        }
+                    }
                     Spacer()
                     if session.undoAvailable { cardButton(strings.undo, prominent: false) { session.undo() } }
                     cardButton(strings.close, prominent: true, action: onClose)

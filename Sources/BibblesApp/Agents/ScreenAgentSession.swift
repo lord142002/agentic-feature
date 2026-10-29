@@ -29,6 +29,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     @Published private(set) var canUndo = false
     /// True when the plan was made on the Mac with no AI call.
     @Published private(set) var madeOnMac = false
+    /// The file a save or export wrote (Show in Finder).
+    @Published private(set) var savedFile: URL?
 
     private var executor: ScreenExecutor?
     private var result: ScreenRunResult?
@@ -143,6 +145,10 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         self.result = result
         finishedAt = Date()
         var sentences: [String] = []
+        savedFile = result.savedFile
+        if let file = result.savedFile {
+            sentences.append("Saved \(file.lastPathComponent) in \(ScreenSaveLocation.display(file.deletingLastPathComponent())).")
+        }
         if result.filled > 0 { sentences.append("Filled \(result.filled) field\(result.filled == 1 ? "" : "s").") }
         let other = result.done - result.filled - result.failed
         if other > 0 { sentences.append("Did \(other) step\(other == 1 ? "" : "s").") }

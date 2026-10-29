@@ -25,6 +25,9 @@ enum ScreenStep: Equatable {
     case choose(String, option: String)
     /// One of Bibbles' Mac actions (dark mode, volume, brightness, open app).
     case mac(AgentToolCall)
+    /// In an open save or export sheet: go to `folder` and use `name` (both
+    /// optional), then press its Save/Export button.
+    case save(folder: String?, name: String?)
 }
 
 struct ScreenPlan: Equatable {
@@ -48,7 +51,9 @@ enum ScreenPlanParser {
             "type": "object",
             "required": ["action"],
             "properties": [
-                "action": ["type": "string", "enum": ["menu", "press", "fill", "toggle", "choose", "mac"]],
+                "action": ["type": "string", "enum": ["menu", "press", "fill", "toggle", "choose", "mac", "save"]],
+                "folder": ["type": "string"],
+                "name": ["type": "string"],
                 "path": ["type": "array", "items": ["type": "string"]],
                 "target": ["type": "string"],
                 "field": ["type": "string"],
@@ -109,6 +114,8 @@ enum ScreenPlanParser {
         case "choose":
             guard let target = text("target"), let option = text("option") else { return nil }
             return .choose(target, option: option)
+        case "save":
+            return .save(folder: text("folder"), name: text("name"))
         case "mac":
             guard let tool = text("tool"), macTools.contains(tool) else { return nil }
             let input = (object["input"] as? [String: Any] ?? [:]).mapValues(AgentValue.init)
@@ -210,9 +217,127 @@ enum ScreenSafety {
     }
 
     /// Buttons a menu command usually opens (a save or export sheet).
+    /// The button that writes the file in a save or export sheet.
+    static let saveButtons = ["save", "export", "speichern", "sichern", "exportieren", "guardar", "exportar", "enregistrer",
+                              "exporter", "salvar", "保存", "書き出す", "सहेजें"]
+
     static let dialogButtons = ["save", "ok", "export", "done", "continue", "next", "open", "choose", "print",
                                 "speichern", "sichern", "exportieren", "guardar", "exportar", "aceptar", "enregistrer",
                                 "exporter", "salvar", "保存", "書き出す", "सहेजें"]
+}
+
+// MARK: - Where to save (no AI)
+
+/// Turns "Desktop", "Holi photos", "Documents/Taxes" or "~/Desktop/Trip" into a
+/// folder inside the home folder (never Library or hidden folders).
+enum ScreenSaveLocation {
+    static let bases: [(names: [String], location: FileLocation)] = [
+        (["desktop", "escritorio", "schreibtisch", "bureau", "área de trabalho", "area de trabalho", "scrivania", "bureaublad",
+          "デスクトップ", "डेस्कटॉप"], .desktop),
+        (["documents", "documentos", "dokumente", "documenti", "documenten", "書類", "ドキュメント", "दस्तावेज़"], .documents),
+        (["downloads", "download", "descargas", "téléchargements", "telechargements", "transferências", "ダウンロード", "डाउनलोड"], .downloads),
+        (["home", "home folder", "inicio", "persönlicher ordner"], .home)
+    ]
+    static let createWords = ["new folder", "create", "make a folder", "neuen ordner", "neuer ordner", "nueva carpeta", "crea",
+                              "nouveau dossier", "crée", "nova pasta", "cria", "新しいフォルダ", "नया फ़ोल्डर", "naya folder"]
+
+    static func base(_ name: String) -> URL? {
+        let folded = ToolGateText.fold(name)
+        return bases.first { $0.names.contains { ToolGateText.fold($0) == folded } }?.location.url
+    }
+
+    /// The folder and whether it must be created (only when the user asked for a new folder).
+    static func resolve(_ spec: String, request requestFolded: String,
+                        fileManager: FileManager = .default) -> Result<(url: URL, create: Bool), AgentPlanParser.StepProblem> {
+        let home = fileManager.homeDirectoryForCurrentUser.standardizedFileURL
+        var parts = spec.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "/").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty }
+        guard !parts.isEmpty else { return .failure(.init(reason: "no folder")) }
+        var url: URL
+        if spec.trimmingCharacters(in: .whitespaces).hasPrefix("/") {
+            // An absolute path: allowed only inside the home folder (checked below).
+            url = URL(fileURLWithPath: "/")
+        } else if parts[0] == "~" {
+            url = home
+            parts.removeFirst()
+        } else if let known = base(parts[0]) {
+            url = known
+            parts.removeFirst()
+        } else if parts.count == 1, let found = find(named: parts[0], fileManager: fileManager) {
+            return checked(found, home: home, create: false)
+        } else {
+            url = FileLocation.desktop.url ?? home
+        }
+        for part in parts {
+            if part == ".." || part.hasPrefix(".") || part.contains(":") { return .failure(.init(reason: "unsafe folder name “\(part)”")) }
+            url.appendPathComponent(part, isDirectory: true)
+        }
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue else { return .failure(.init(reason: "“\(url.lastPathComponent)” is a file, not a folder")) }
+            return checked(url, home: home, create: false)
+        }
+        let askedForNew = createWords.contains { word in
+            ToolGateText.isUnspaced(word) ? requestFolded.contains(word) : (" " + requestFolded + " ").contains(" " + ToolGateText.fold(word) + " ")
+        }
+        guard askedForNew else { return .failure(.init(reason: "there's no folder “\(spec)”; say \"new folder\" to create it")) }
+        return checked(url, home: home, create: true)
+    }
+
+    private static func checked(_ url: URL, home: URL, create: Bool) -> Result<(url: URL, create: Bool), AgentPlanParser.StepProblem> {
+        let path = url.standardizedFileURL.path
+        guard path == home.path || path.hasPrefix(home.path + "/") else { return .failure(.init(reason: "only folders inside your home folder")) }
+        guard !path.hasPrefix(home.path + "/Library"), !path.contains("/.") else { return .failure(.init(reason: "not a system or hidden folder")) }
+        return .success((url.standardizedFileURL, create))
+    }
+
+    /// An existing folder with this name in Desktop, Documents or Downloads (two levels deep).
+    static func find(named name: String, fileManager: FileManager) -> URL? {
+        let wanted = ToolGateText.fold(name)
+        for base in [FileLocation.desktop, .documents, .downloads].compactMap(\.url) {
+            var queue: [(URL, Int)] = [(base, 0)]
+            while !queue.isEmpty {
+                let (folder, depth) = queue.removeFirst()
+                let items = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey],
+                                                                  options: [.skipsHiddenFiles, .skipsPackageDescendants])) ?? []
+                for item in items where (try? item.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+                    if ToolGateText.fold(item.lastPathComponent) == wanted { return item }
+                    if depth < 1 { queue.append((item, depth + 1)) }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// "Desktop", "Desktop ▸ Holi" for the preview.
+    static func display(_ url: URL) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        guard path.hasPrefix(home + "/") else { return path == home ? "your home folder" : path }
+        return path.dropFirst(home.count + 1).split(separator: "/").joined(separator: " ▸ ")
+    }
+}
+
+/// Finds the file a save sheet just wrote.
+enum ScreenSavedFile {
+    static func locate(name: String, folders: [URL], since: Date, fileManager: FileManager = .default) -> URL? {
+        let stem = ToolGateText.fold((name as NSString).deletingPathExtension)
+        guard !stem.isEmpty else { return nil }
+        var best: (URL, Date)?
+        for folder in folders {
+            let items = (try? fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey],
+                                                              options: [.skipsHiddenFiles])) ?? []
+            for item in items {
+                let itemStem = ToolGateText.fold(item.deletingPathExtension().lastPathComponent)
+                guard itemStem == stem || ToolGateText.fold(item.lastPathComponent) == ToolGateText.fold(name),
+                      let date = (try? item.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                      date >= since.addingTimeInterval(-5) else { continue }
+                if best == nil || date > best!.1 { best = (item, date) }
+            }
+        }
+        return best?.0
+    }
 }
 
 // MARK: - What's on screen (Accessibility, no screenshot)
@@ -397,6 +522,76 @@ enum ScreenAX {
     static func press(_ element: AXUIElement) -> Bool {
         AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
     }
+
+    // MARK: Save sheets
+
+    /// The file the front window shows (its folder is a likely save location).
+    static func documentURL(of app: NSRunningApplication) -> URL? {
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        guard let window = element(appElement, kAXFocusedWindowAttribute),
+              let raw = string(window, kAXDocumentAttribute) else { return nil }
+        return URL(string: raw)
+    }
+
+    static func descendants(of root: AXUIElement, limit: Int = 2_000, where match: (AXUIElement, String) -> Bool) -> [AXUIElement] {
+        var found: [AXUIElement] = []
+        var budget = limit
+        func visit(_ node: AXUIElement, depth: Int) {
+            guard budget > 0, depth < 25 else { return }
+            budget -= 1
+            if match(node, string(node, kAXRoleAttribute) ?? "") { found.append(node) }
+            for child in children(node) { visit(child, depth: depth + 1) }
+        }
+        visit(root, depth: 0)
+        return found
+    }
+
+    /// The open save/export sheet, or the save window itself.
+    static func saveSheet(in app: NSRunningApplication) -> AXUIElement? {
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        guard let window = element(appElement, kAXFocusedWindowAttribute) else { return nil }
+        let candidates = children(window).filter { string($0, kAXRoleAttribute) == "AXSheet" } + [window]
+        return candidates.first { saveButton(in: $0) != nil && nameField(in: $0) != nil }
+    }
+
+    static func waitForSaveSheet(in app: NSRunningApplication, timeout: TimeInterval = 5) async -> AXUIElement? {
+        let end = Date().addingTimeInterval(timeout)
+        repeat {
+            if let sheet = saveSheet(in: app) { return sheet }
+            try? await Task.sleep(nanoseconds: 300_000_000)
+        } while Date() < end && !Task.isCancelled
+        return nil
+    }
+
+    /// "Save As:" / "Export As:": the first editable text field in the sheet.
+    static func nameField(in sheet: AXUIElement) -> AXUIElement? {
+        descendants(of: sheet, limit: 800) { node, role in
+            role == "AXTextField" && !(title(node).lowercased().contains("search")) && string(node, kAXSubroleAttribute) != "AXSearchField"
+        }.first
+    }
+
+    /// The sheet's default button when it saves or exports (never Replace or Delete).
+    static func saveButton(in sheet: AXUIElement) -> AXUIElement? {
+        func isSave(_ button: AXUIElement) -> Bool {
+            let name = normalized(title(button))
+            return ScreenSafety.saveButtons.contains(name) && ScreenSafety.blockedWord(in: title(button)) == nil
+        }
+        if let preferred = element(sheet, kAXDefaultButtonAttribute), isSave(preferred) { return preferred }
+        return descendants(of: sheet, limit: 800) { node, role in role == "AXButton" && isSave(node) }.first
+    }
+
+    /// Presses a key in the front app (⌘⇧G opens "Go to folder" in save sheets).
+    static func postKey(_ code: CGKeyCode, flags: CGEventFlags = []) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { continue }
+            event.flags = flags
+            event.post(tap: .cghidEventTap)
+        }
+    }
+
+    /// macOS asks before overwriting; Bibbles leaves that choice to the user.
+    static let replaceTitles = ["replace", "ersetzen", "reemplazar", "remplacer", "substituir", "sostituisci", "置き換える", "बदलें"]
 }
 
 // MARK: - Validation → preview (no AI)
@@ -409,6 +604,8 @@ enum ScreenAction {
     case toggle(String, on: Bool)
     case choose(String, option: String)
     case mac(AgentToolCall)
+    /// Save sheet: optional folder (created first when asked), optional name, then Save/Export.
+    case save(folder: URL?, createFolder: Bool, name: String?)
 
     var isUndoable: Bool {
         switch self {
@@ -483,12 +680,18 @@ enum ScreenPlanValidator {
                 if box.isOn == on { continue }
                 add(.toggle(box.title, on: on), "Turn \(on ? "on" : "off") “\(box.title)”")
             case .choose(let title, let option):
-                guard let popUp = control(title, roles: ["AXPopUpButton", "AXMenuButton"]) else {
-                    drop(index, "no “\(title)” menu on screen"); continue
-                }
                 let saidOrSaved = requestFolded.contains(ToolGateText.fold(option))
                     || MyDetails.Key.allCases.contains { ToolGateText.fold(details.value($0)) == ToolGateText.fold(option) }
                 guard saidOrSaved else { drop(index, "“\(option)” wasn't in your request or your details"); continue }
+                guard let popUp = control(title, roles: ["AXPopUpButton", "AXMenuButton"]) else {
+                    // A pop-up in the sheet a menu command opens (Format: PDF, PNG…).
+                    if opensDialog {
+                        add(.choose(title, option: option), "Choose “\(option)” in “\(title)”")
+                    } else {
+                        drop(index, "no “\(title)” menu on screen")
+                    }
+                    continue
+                }
                 if !popUp.options.isEmpty, !popUp.options.contains(where: { ScreenAX.normalized($0) == ScreenAX.normalized(option) }) {
                     drop(index, "“\(title)” has no option “\(option)”"); continue
                 }
@@ -509,6 +712,30 @@ enum ScreenPlanValidator {
             case .mac(let call):
                 guard ScreenPlanParser.macTools.contains(call.name) else { drop(index, "not allowed"); continue }
                 add(.mac(call), CommandAgent.describe(call))
+            case .save(let folderSpec, let rawName):
+                guard opensDialog else { drop(index, "open the save or export window first"); continue }
+                var name: String?
+                if let rawName {
+                    // Only a name the user said; Bibbles never invents one.
+                    let cleaned = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard requestFolded.contains(ToolGateText.fold((cleaned as NSString).deletingPathExtension)),
+                          !cleaned.contains("/"), !cleaned.hasPrefix("."), !cleaned.contains(":") else {
+                        drop(index, "the file name “\(cleaned)” wasn't in your request"); continue
+                    }
+                    name = cleaned
+                }
+                var folder: URL?
+                var create = false
+                if let folderSpec {
+                    switch ScreenSaveLocation.resolve(folderSpec, request: requestFolded) {
+                    case .failure(let problem): drop(index, problem.reason); continue
+                    case .success(let resolved): (folder, create) = (resolved.url, resolved.create)
+                    }
+                }
+                var text = "Save"
+                if let name { text += " as “\(name)”" }
+                if let folder { text += " in \(create ? "a new folder " : "")\(ScreenSaveLocation.display(folder))" }
+                add(.save(folder: folder, createFolder: create, name: name), text)
             }
         }
         return preview
@@ -560,9 +787,9 @@ enum ScreenAgentPrompt {
     static func system(replyLanguage: String) -> String {
         """
         You plan actions in the Mac app on screen for Bibbles. You get the user's request and a TEXT description of the app: its menus, the buttons, checkboxes, pop-ups and fields in the front window, and which of the user's saved details exist. Return ONE JSON object only:
-        {"summary":"one short sentence","steps":[{"action":"menu","path":["File","Export as PDF…"]},{"action":"press","target":"Save"},{"action":"fill","field":"Email","value":"{{email}}"},{"action":"toggle","target":"Remember me","on":false},{"action":"choose","target":"Country","option":"India"},{"action":"mac","tool":"set_dark_mode","input":{"mode":"on"}}]}
-        Actions (no others): menu (path of titles exactly as listed), press (a button title), fill (a field label and the text), toggle (a checkbox and on/off), choose (a pop-up and an option), mac (tool set_dark_mode {"mode":"on|off|toggle"}, set_volume {"action":"set|up|down|mute|unmute","level":0-100}, set_brightness {"action":"up|down"}, open_app {"name"}).
-        Use only titles that appear in the description. After a menu command opens a save or export sheet, you may press its usual button (Save, Export, OK).
+        {"summary":"one short sentence","steps":[{"action":"menu","path":["File","Export as PDF…"]},{"action":"press","target":"Save"},{"action":"fill","field":"Email","value":"{{email}}"},{"action":"toggle","target":"Remember me","on":false},{"action":"choose","target":"Country","option":"India"},{"action":"mac","tool":"set_dark_mode","input":{"mode":"on"}},{"action":"save","folder":"Desktop"}]}
+        Actions (no others): menu (path of titles exactly as listed), press (a button title), fill (a field label and the text), toggle (a checkbox and on/off), choose (a pop-up and an option), mac (tool set_dark_mode {"mode":"on|off|toggle"}, set_volume {"action":"set|up|down|mute|unmute","level":0-100}, set_brightness {"action":"up|down"}, open_app {"name"}), save (folder, name).
+        Use only titles that appear in the description. After a menu command opens a save or export sheet: use {"action":"save","folder":"Desktop","name":"holi final"} to save it (folder and name are optional: give a folder only when the user said where, e.g. Desktop, Documents, Downloads, a folder name like "Holi photos", or "Desktop/Holi"; give a name only when the user said one). You may also choose the sheet's Format pop-up (e.g. PDF, PNG, JPEG) when the user named a format. Prefer "save" over pressing Save.
         For Mac-wide settings such as dark mode, volume or brightness, use one mac step instead of navigating System Settings.
         To type the user's own details use ONLY these placeholders: {{firstName}} {{lastName}} {{fullName}} {{email}} {{phone}} {{street}} {{city}} {{postalCode}} {{country}} {{company}} {{jobTitle}} {{website}}. You never see the values. Never type anything else except words the user said. Never fill passwords, card, bank, ID or one-time-code fields.
         Never press or choose Submit, Send, Sign up, Register, Pay, Buy, Order, Delete, Confirm or similar final actions: stop before them; the user presses them.
@@ -595,6 +822,8 @@ struct ScreenRunResult {
     var previousValues: [(field: FormField, text: String)] = []
     /// For Undo: dark mode before a dark mode step.
     var darkModeBefore: Bool?
+    /// The file a save or export wrote, when Bibbles could find it.
+    var savedFile: URL?
 }
 
 /// Runs checked actions one at a time on the main thread; Stop halts after
@@ -603,6 +832,8 @@ struct ScreenRunResult {
 final class ScreenExecutor {
     private(set) var stopRequested = false
     private let inserter: FocusedTextInserter
+    /// The folder of the document on screen (a likely save location).
+    private var documentFolder: URL?
 
     init(inserter: FocusedTextInserter) { self.inserter = inserter }
 
@@ -613,6 +844,7 @@ final class ScreenExecutor {
     func run(_ actions: [ScreenAction], in app: NSRunningApplication,
              progress: (Int, Int) -> Void) async -> ScreenRunResult {
         var result = ScreenRunResult(total: actions.count)
+        documentFolder = ScreenAX.documentURL(of: app)?.deletingLastPathComponent()
         app.activate(options: [.activateIgnoringOtherApps])
         try? await Task.sleep(nanoseconds: 350_000_000)
         for action in actions {
@@ -642,8 +874,40 @@ final class ScreenExecutor {
             guard let found = await ScreenAX.findControl(title, in: app) else { return "couldn't find “\(title)”" }
             // The screen may have changed since the preview.
             guard ScreenSafety.blockedWord(in: found.control.title) == nil else { return "“\(found.control.title)” is for you to press" }
+            // Pressing Save in a sheet: remember the name to find the file afterwards.
+            let savingName = ScreenSafety.saveButtons.contains(ScreenAX.normalized(found.control.title))
+                ? ScreenAX.saveSheet(in: app).flatMap { ScreenAX.nameField(in: $0) }.flatMap { ScreenAX.string($0, kAXValueAttribute) } : nil
+            let pressedAt = Date()
             guard ScreenAX.press(found.element) else { return "couldn't press “\(title)”" }
             try? await Task.sleep(nanoseconds: 500_000_000)
+            if let savingName {
+                if let problem = await replaceProblem(in: app) { return problem }
+                result.savedFile = await locateSaved(savingName, in: nil, since: pressedAt)
+            }
+        case .save(let folder, let create, let name):
+            guard let sheet = await ScreenAX.waitForSaveSheet(in: app) else { return "the save window didn't open" }
+            if let folder {
+                if create {
+                    do { try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) } catch {
+                        return "couldn't create the folder \(folder.lastPathComponent)"
+                    }
+                }
+                await goToFolder(folder)
+            }
+            let current = ScreenAX.saveSheet(in: app) ?? sheet
+            let field = ScreenAX.nameField(in: current)
+            if let name, let field {
+                let formField = FormField(id: 1, element: field, role: "AXTextField", label: "Save As",
+                                          value: ScreenAX.string(field, kAXValueAttribute) ?? "", hasCursor: false)
+                _ = await FormFieldFiller(inserter: inserter).fill([FormFillAction(field: 1, text: name, replace: true)], fields: [formField])
+            }
+            let finalName = field.flatMap { ScreenAX.string($0, kAXValueAttribute) } ?? name ?? ""
+            guard let button = ScreenAX.saveButton(in: ScreenAX.saveSheet(in: app) ?? current) else { return "couldn't find the Save button" }
+            let pressedAt = Date()
+            guard ScreenAX.press(button) else { return "couldn't press Save" }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            if let problem = await replaceProblem(in: app) { return problem }
+            result.savedFile = await locateSaved(finalName, in: folder, since: pressedAt)
         case .toggle(let title, let on):
             guard let found = await ScreenAX.findControl(title, roles: ["AXCheckBox", "AXRadioButton"], in: app, timeout: 2) else {
                 return "couldn't find “\(title)”"
@@ -669,6 +933,41 @@ final class ScreenExecutor {
             } catch {
                 return error.localizedDescription
             }
+        }
+        return nil
+    }
+
+    /// ⌘⇧G, the folder path, Return: macOS's own "Go to folder" in save sheets.
+    private func goToFolder(_ folder: URL) async {
+        ScreenAX.postKey(5, flags: [.maskCommand, .maskShift])
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        inserter.pressSelectAll()
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        try? inserter.paste(folder.path, restoringClipboard: true)
+        try? await Task.sleep(nanoseconds: 450_000_000)
+        ScreenAX.postKey(36)
+        try? await Task.sleep(nanoseconds: 900_000_000)
+    }
+
+    /// "A file with that name already exists": stop, the user decides.
+    private func replaceProblem(in app: NSRunningApplication) async -> String? {
+        for title in ScreenAX.replaceTitles {
+            if await ScreenAX.findControl(title, roles: ["AXButton"], in: app, timeout: 0.1) != nil {
+                return "a file with that name already exists: choose Replace or Cancel yourself"
+            }
+        }
+        return nil
+    }
+
+    /// Waits a moment for the file to appear: the chosen folder, the document's
+    /// folder, then Desktop, Documents and Downloads.
+    private func locateSaved(_ name: String, in folder: URL?, since: Date) async -> URL? {
+        guard !name.isEmpty else { return nil }
+        let folders = [folder, documentFolder, FileLocation.desktop.url, FileLocation.documents.url, FileLocation.downloads.url]
+            .compactMap { $0 }
+        for _ in 0..<8 {
+            if let found = ScreenSavedFile.locate(name: name, folders: folders, since: since) { return found }
+            try? await Task.sleep(nanoseconds: 400_000_000)
         }
         return nil
     }

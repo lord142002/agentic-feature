@@ -51,6 +51,9 @@ For each test, ask by voice (hold Control + Option) or by typing (double-tap Con
 | S4 | Anywhere | "Go to Settings and turn on dark mode" | Preview: one step, turn dark mode on. Start switches dark mode on. Undo switches it back. |
 | S5 | A form with "Remember me" ticked | "Untick remember me" | Preview: "Turn off “Remember me”". Start unticks it. |
 | S6 | A checkout page | "Fill my details and pay" | The details are filled. **Pay** is skipped with "Bibbles never presses …". |
+| S6b | Preview with an image | "Can you please export this to PDF and save it on my Desktop" | Preview: "Choose File ▸ Export as PDF…", then "Save in Desktop". Done shows "Saved holi7.pdf in Desktop" and a **Show in Finder** button. |
+| S6c | TextEdit with a document | "Export this as PDF into my Holi folder and name it holi final" | "Save as “holi final” in Desktop ▸ Holi" (or wherever your Holi folder is). If the folder doesn't exist, the step is skipped unless you said "new folder". |
+| S6d | Repeat S6b | — | macOS asks to **Replace** the existing file. Bibbles stops with "a file with that name already exists". You choose. |
 | S7 | Anywhere | "Where is the Export button?" | **No agent.** Ordinary screen help points at it. |
 | S8 | Turn **AI Agents (Screen)** off and repeat S1 | — | No agent card. Today's form fill runs, using placeholders like [Your Name]. |
 

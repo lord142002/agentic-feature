@@ -169,6 +169,57 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertTrue(preview.lines[0].undoable)
     }
 
+    // MARK: Save where the user says
+
+    func testParsesSaveSteps() {
+        let parsed = ScreenPlanParser.parse(#"{"summary":"","steps":[{"action":"menu","path":["File","Export as PDF…"]},{"action":"save","folder":"Desktop","name":"holi final"},{"action":"save"}]}"#)
+        XCTAssertEqual(parsed.plan?.steps, [.menu(["File", "Export as PDF…"]), .save(folder: "Desktop", name: "holi final"),
+                                            .save(folder: nil, name: nil)])
+    }
+
+    func testSaveFoldersStayInsideTheHomeFolder() throws {
+        let desktop = try XCTUnwrap(FileLocation.desktop.url)
+        XCTAssertEqual(try ScreenSaveLocation.resolve("Desktop", request: "").get().url.path, desktop.standardizedFileURL.path)
+        XCTAssertEqual(try ScreenSaveLocation.resolve("Schreibtisch", request: "").get().url.path, desktop.standardizedFileURL.path)
+        XCTAssertEqual(ScreenSaveLocation.display(desktop), "Desktop")
+        let missing = "Bibbles Test \(UUID().uuidString.prefix(6))"
+        XCTAssertThrowsError(try ScreenSaveLocation.resolve("Desktop/\(missing)", request: "save it on the desktop").get(),
+                             "a missing folder is only created when the user asks for a new folder")
+        let created = try ScreenSaveLocation.resolve("Desktop/\(missing)", request: ToolGateText.fold("save it in a new folder on the desktop")).get()
+        XCTAssertTrue(created.create)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: created.url.path), "nothing is created before Start")
+        for unsafe in ["/etc", "/System/Library", "~/Library/Preferences", "Desktop/../../etc", "Desktop/.secret"] {
+            XCTAssertThrowsError(try ScreenSaveLocation.resolve(unsafe, request: "new folder").get(), unsafe)
+        }
+    }
+
+    @MainActor
+    func testSaveNeedsASheetAndOnlyNamesTheUserSaid() {
+        let menus: [(path: [String], enabled: Bool)] = [(["File", "Export as PDF…"], true)]
+        let plan = ScreenPlan(summary: "", steps: [.save(folder: "Desktop", name: nil),
+                                                   .menu(["File", "Export as PDF…"]),
+                                                   .save(folder: "Desktop", name: "holi final"),
+                                                   .save(folder: nil, name: "invented name")])
+        let preview = ScreenPlanValidator.preview(plan, snapshot: snapshot(menus: menus),
+                                                  request: "export this to pdf, save it on the desktop as holi final", details: me)
+        XCTAssertEqual(preview.lines.map(\.text), ["Choose File ▸ Export as PDF…", "Save as “holi final” in Desktop"])
+        XCTAssertEqual(preview.dropped.map(\.index), [0, 3])
+        XCTAssertFalse(preview.lines[1].undoable)
+    }
+
+    func testFindsTheFileASheetJustSaved() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("BibblesSaved-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let started = Date()
+        let old = folder.appendingPathComponent("holi6.pdf")
+        try Data("x".utf8).write(to: old)
+        try FileManager.default.setAttributes([.modificationDate: started.addingTimeInterval(-3_600)], ofItemAtPath: old.path)
+        try Data("x".utf8).write(to: folder.appendingPathComponent("holi7.pdf"))
+        XCTAssertEqual(ScreenSavedFile.locate(name: "holi7", folders: [folder], since: started)?.lastPathComponent, "holi7.pdf")
+        XCTAssertNil(ScreenSavedFile.locate(name: "holi6", folders: [folder], since: started), "an old file is not the one just saved")
+    }
+
     // MARK: Detection and routing
 
     func testDetection() {
