@@ -1368,6 +1368,12 @@ private struct AccountPage: View {
                     .accessibilityLabel("Refresh monthly usage")
                 }
             }
+            #if BIBBLES_DEVELOPER
+            if LocalMode.isOn, let cached = LocalUsageCache.load() {
+                Text(cached.label)
+                    .font(.system(size: 11.5, weight: .medium)).foregroundStyle(Color.orange.opacity(0.9))
+            }
+            #endif
             if let counters = shownCounters, !counters.isEmpty {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 22), count: min(3, counters.count)),
                           alignment: .leading, spacing: 4) {
