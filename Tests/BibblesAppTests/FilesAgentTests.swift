@@ -340,7 +340,9 @@ final class FilesAgentTests: XCTestCase {
         for text in ["Clean up my Downloads folder", "Put all PDFs on my Desktop into a folder called Documents 2026",
                      "Organize my screenshots by month", "Move old .dmg installers in Downloads to the Trash",
                      "Limpia mi carpeta de descargas", "Räum meinen Download-Ordner auf", "Downloads folder saaf kar do",
-                     "Range mon dossier Téléchargements", "Organiza a minha pasta de downloads", "ダウンロードフォルダを整理して"] {
+                     "Range mon dossier Téléchargements", "Organiza a minha pasta de downloads", "ダウンロードフォルダを整理して",
+                     "rename all the screenshot image file on my desktop to trip 1 trip 2 trip 3",
+                     "Renombra todas las capturas del escritorio", "Desktop ke screenshots ka sabka naam trip kar do"] {
             XCTAssertTrue(FilesAgentDetector.isRequest(text), text)
         }
         for text in ["How do I organise my desktop?", "Rename report to final", "Move my meeting to Friday",
