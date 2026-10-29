@@ -22,6 +22,8 @@ final class DeveloperControls: ObservableObject {
     /// "Local mode (use my keys, skip the server)", default OFF.
     @Published private(set) var localMode = LocalMode.isOn
     @Published private(set) var costCount = 0
+    /// Feature → picked model ID (Models page).
+    @Published private(set) var models: [ModelFeature: String] = [:]
     @Published private(set) var costTotal = 0.0
     @Published private(set) var recordingLog = false
     @Published private(set) var logCount = 0
@@ -42,6 +44,7 @@ final class DeveloperControls: ObservableObject {
         aiRouter = HybridRouter.isEnabled
         keyStatus = Dictionary(uniqueKeysWithValues: DeveloperKeySlot.allCases.map { ($0, DeveloperKeychain.status($0)) })
         localMode = LocalMode.isOn
+        models = Dictionary(uniqueKeysWithValues: ModelFeature.allCases.map { ($0, ModelCatalog.selected($0).id) })
         costCount = LocalCostLog.shared.entries.count
         costTotal = LocalCostLog.shared.totalCost
         recordingLog = ToolGateLog.shared.isRecording
@@ -83,6 +86,14 @@ final class DeveloperControls: ObservableObject {
         if !hasKey(.anthropic) { missing.append("Anthropic") }
         guard !missing.isEmpty else { return nil }
         return "Local mode needs your \(missing.joined(separator: " and ")) key\(missing.count == 1 ? "" : "s") (below)."
+    }
+
+    // MARK: Models (local testing)
+
+    func selectModel(_ id: String, for feature: ModelFeature) {
+        guard let choice = ModelCatalog.choices(for: feature).first(where: { $0.id == id }) else { return }
+        ModelCatalog.select(choice, for: feature)
+        refresh()
     }
 
     @discardableResult

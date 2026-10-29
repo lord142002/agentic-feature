@@ -2072,6 +2072,17 @@ private struct DeveloperPage: View {
                     .padding(.bottom, 16)
                 }
             }
+            SectionLabel(text: "Models (local testing)")
+            Card {
+                ForEach(Array(ModelFeature.allCases.enumerated()), id: \.element) { index, feature in
+                    if index > 0 { RowDivider() }
+                    modelRow(feature)
+                }
+                Text("Pinned IDs, verified \(ModelCatalog.verifiedOn) (docs/MODELS.md). Used only in Local mode; model choices are saved on this Mac, keys never are.")
+                    .font(.system(size: 12)).foregroundStyle(.white.opacity(0.45))
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 16)
+            }
             SectionLabel(text: "Local mode cost log")
             Card {
                 SettingRow(title: "Estimated cost",
@@ -2100,6 +2111,25 @@ private struct DeveloperPage: View {
             }
         }
         .onAppear { controls.refresh() }
+    }
+
+    /// One feature's model picker, with its price per million tokens.
+    private func modelRow(_ feature: ModelFeature) -> some View {
+        let choices = ModelCatalog.choices(for: feature)
+        let selected = controls.models[feature] ?? ModelCatalog.defaultChoice(for: feature).id
+        let current = choices.first { $0.id == selected } ?? choices[0]
+        return SettingRow(title: feature.title,
+                          detail: "\(current.id) · $\(String(format: "%g", current.inputPerMillion)) in / $\(String(format: "%g", current.outputPerMillion)) out per million tokens") {
+            Picker("", selection: Binding(get: { selected }, set: { controls.selectModel($0, for: feature) })) {
+                ForEach(choices) { choice in
+                    Text(choice.name + (choice == ModelCatalog.defaultChoice(for: feature) ? " (default)" : "")).tag(choice.id)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 210)
+            .disabled(choices.count < 2)
+            .accessibilityLabel("\(feature.title) model")
+        }
     }
 
     /// One provider key: name, use, status (last 4 characters only) and
