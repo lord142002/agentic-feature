@@ -2043,6 +2043,22 @@ private struct DeveloperPage: View {
                         .padding(.horizontal, 22)
                         .padding(.bottom, 16)
                 }
+                RowDivider()
+                SettingRow(title: "Run Agent Plan Test Set",
+                           detail: "Plans \(AgentPlanTestSet.cases.count) Files requests (EN, ES, DE, FR, PT, JA, Hindi/Hinglish) against a fake folder summary on every planner with a saved key. Planning only, no files touched. Copies valid JSON %, allowed actions %, correct plan %, average and slowest ms and cost per plan.") {
+                    PillButton(title: controls.agentTestRunning ? "Running…" : "Run", prominent: !controls.agentTestRunning,
+                               symbol: controls.agentTestRunning ? nil : "play.fill") { controls.runAgentPlanTestSet() }
+                        .disabled(controls.agentTestRunning)
+                }
+                if let progress = controls.agentTestProgress {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ProgressView(value: Double(progress.done), total: Double(max(1, progress.total)))
+                        Text("\(progress.done) of \(progress.total) plans")
+                            .font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+                    }
+                    .padding(.horizontal, 22)
+                    .padding(.bottom, 16)
+                }
             }
             SectionLabel(text: "Routing")
             Card {

@@ -24,6 +24,8 @@ final class DeveloperControls: ObservableObject {
     @Published private(set) var costCount = 0
     /// "AI Agents (Files)", default OFF.
     @Published private(set) var filesAgent = AgentSettings.filesEnabled
+    @Published private(set) var agentTestRunning = false
+    @Published private(set) var agentTestProgress: (done: Int, total: Int)?
     /// Feature → picked model ID (Models page).
     @Published private(set) var models: [ModelFeature: String] = [:]
     @Published private(set) var costTotal = 0.0
@@ -97,6 +99,35 @@ final class DeveloperControls: ObservableObject {
         AgentSettings.filesEnabled = on
         refresh()
         show(on ? "Files agent on: \"clean up my Downloads\" now shows a preview first" : "Files agent off: today's behaviour")
+    }
+
+    /// Plans the 30 test requests against a fake folder summary on every
+    /// planner model with a saved key (planning only, no files touched) and
+    /// copies the report.
+    func runAgentPlanTestSet() {
+        guard !agentTestRunning else { return }
+        let models = AgentPlanTestRunner.availableModels
+        guard !models.isEmpty else {
+            show("Add your OpenRouter or Anthropic key first.", error: true)
+            return
+        }
+        agentTestRunning = true
+        agentTestProgress = (0, models.count * AgentPlanTestSet.cases.count)
+        show("Planning \(AgentPlanTestSet.cases.count) requests on \(models.count) model\(models.count == 1 ? "" : "s")…")
+        Task { @MainActor in
+            let rows = await AgentPlanTestRunner.run(models: models) { done, total in
+                await MainActor.run { DeveloperControls.shared.agentTestProgress = (done, total) }
+            }
+            self.agentTestRunning = false
+            self.agentTestProgress = nil
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(AgentPlanTestRunner.report(rows), forType: .string)
+            let best = models.map { model -> (String, Int) in
+                (model.name, rows.filter { $0.model == model && $0.correct }.count)
+            }.map { "\($0.0) \($0.1)/\(AgentPlanTestSet.cases.count)" }.joined(separator: " · ")
+            self.show("Report copied · correct plans: " + best)
+            self.refresh()
+        }
     }
 
     // MARK: Models (local testing)

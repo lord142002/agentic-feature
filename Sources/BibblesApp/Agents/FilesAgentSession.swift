@@ -63,7 +63,8 @@ final class FilesAgentSession: ObservableObject, Identifiable {
             guard let self else { return }
             do {
                 guard LocalMode.isOn else { throw AgentError.needsLocalMode }
-                guard let target = FilesAgentDetector.target(in: text), let root = target.url else {
+                guard let target = FilesAgentDetector.target(in: text), let root = target.url,
+                      !FilesPathSafety.isSystemPath(root) else {
                     throw AgentError.folder("Say which folder to organise: Downloads, Desktop or Documents.")
                 }
                 let recursive = FilesAgentDetector.wantsSubfolders(text)

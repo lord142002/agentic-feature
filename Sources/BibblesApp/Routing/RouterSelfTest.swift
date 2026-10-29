@@ -252,6 +252,8 @@ enum RouterSelfTest {
         check("test set size", RouterTestSet.cases.count >= 140)
         check("test set covers every route", Set(RouterTestSet.cases.map(\.expected)) == Set(HybridRoute.allCases))
         check("prompt examples don't leak", RouterTestSet.cases.allSatisfy { !RouterPrompt.system.contains($0.text) })
+        // Files agent (temporary folder only)
+        results += AgentSelfTest.checks()
         #endif
 
         let failed = results.filter { !$0.1 }

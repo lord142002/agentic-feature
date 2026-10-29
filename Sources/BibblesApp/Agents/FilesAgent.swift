@@ -289,8 +289,10 @@ enum FolderSummarizer {
             }
         }
         let shown = examples.map { "- " + clean($0) }.joined(separator: "\n")
+        let rootPath = scan.root.standardizedFileURL.path
+        let nested = items.contains { $0.url.deletingLastPathComponent().standardizedFileURL.path != rootPath }
         return """
-        Folder: \(folderName) (top level\(scan.items.contains { $0.url.deletingLastPathComponent().standardizedFileURL != scan.root } ? " and subfolders" : ""))
+        Folder: \(folderName) (top level\(nested ? " and subfolders" : ""))
         Items: \(items.count) (\(byKind["folder"] ?? 0) folders)
         By extension: \(top(byExt, 25))
         By kind: \(top(byKind, 15))
@@ -474,7 +476,8 @@ enum FilesPathSafety {
                 || isInside(resolved, root: root.resolvingSymlinksInPath()) else {
             return .failure(.init(reason: "a link leads outside the folder"))
         }
-        if isSystemPath(url) { return .failure(.init(reason: "system folder")) }
+        // The chosen folder itself is checked once, before the scan.
+        if isSystemPath(url), !isInside(url, root: root) { return .failure(.init(reason: "system folder")) }
         return .success(url)
     }
 
@@ -530,8 +533,8 @@ enum FilesPlanApplier {
             // Every missing folder on the way, outermost first.
             var missing: [URL] = []
             var current = url.standardizedFileURL
-            while !FileManager.default.fileExists(atPath: current.path), !folders.contains(current),
-                  allowedRoots.contains(where: { FilesPathSafety.isInside(current, root: $0) && current != $0.standardizedFileURL }) {
+            while !fileManager.fileExists(atPath: current.path), !folders.contains(where: { $0.path == current.path }),
+                  allowedRoots.contains(where: { FilesPathSafety.isInside(current, root: $0) && current.path != $0.standardizedFileURL.path }) {
                 missing.insert(current, at: 0)
                 current = current.deletingLastPathComponent().standardizedFileURL
             }
@@ -571,7 +574,7 @@ enum FilesPlanApplier {
                             stepProblem = problem.reason
                             continue
                         case .success(let folder):
-                            if folder == item.url.deletingLastPathComponent().standardizedFileURL { continue }
+                            if folder.path == item.url.deletingLastPathComponent().standardizedFileURL.path { continue }
                             if isFolderTarget(item, folder) { continue }
                             needFolder(folder)
                             let destination = AgentExecutor.freeURL(for: folder.appendingPathComponent(item.name),

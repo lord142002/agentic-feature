@@ -42,6 +42,14 @@ sh scripts/build-dev-app.sh
 ```
 
 The bundle is written to `.build/dev-app/Bibbles.app`.
+
+### Developer build (your own keys, Local mode, agents)
+
+```bash
+DEVELOPER=1 ./scripts/build-dev-app.sh
+```
+
+This compiles with `-Xswiftc -DBIBBLES_DEVELOPER` into `.build-dev` and writes `.build-dev/dev-app/Bibbles.app`, with a `.dev` bundle id (its own permissions and Keychain items). Only this build has Settings → Developer: API keys (Keychain only), Local mode (calls the providers directly, never the Bibbles server), Models (docs/MODELS.md), AI Agents (Files) and the test-set runners. Customer builds (`./scripts/build-dev-app.sh`, `swift build`) contain none of it. `sh scripts/check-builds.sh` builds and tests both and greps the customer binary for developer strings. Manual agent tests: docs/AGENT_TEST_SHEET.md.
 The bundle includes Bibbles' four-bar app icon. The same mark appears in the menu bar, chat sidebar, and response card. During push-to-talk and dictation, the floating panel shows a four-bar voice indicator driven by the existing microphone frames at up to 25 visual updates per second. It rests when idle and becomes static when microphone input is unavailable; macOS Reduce Motion removes the animated movement.
 The build script uses an available Apple Development signing identity automatically, or one supplied through `BIBBLES_CODESIGN_IDENTITY`. If neither exists, it falls back to ad-hoc signing. Ad-hoc signing changes the app's macOS privacy identity on every rebuild: a Bibbles switch can remain on in System Settings while screen capture is denied. Set up an Apple Development certificate in Xcode before repeated physical testing. If you are using an ad-hoc build, remove the old Bibbles entry from **Privacy & Security → Screen & System Audio Recording**, add the exact `.build/dev-app/Bibbles.app` built most recently, enable it, then quit and reopen Bibbles. Do this only after the final rebuild.
 
