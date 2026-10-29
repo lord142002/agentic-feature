@@ -70,3 +70,6 @@ Needs **Screen Recording** permission for Bibbles Dev, so the planner can see th
 | A3 | Messages, with a conversation open | "Tell Sam I'm on my way" | Preview: type the text, then "Press return (asks you first)". The message is sent only after you confirm. |
 | A4 | Safari | "Search the web for Holi festival 2026 and open the first result" | Part 1: click the address bar, type, Return. "Looking again…". Part 2: click the first result. |
 | A5 | Any app | A request that would need **Empty Trash** or **Log Out** | That step is skipped with "Bibbles never presses …". |
+| A6 | A drum website (keys or clickable pads) | "Play a rock beat on these drums" | Preview: "Play N notes with chords (about N s)". Kick and hi-hat land together. On key-based sites they're exact; on click-only sites they're a few ms apart. |
+| A7 | A virtual guitar website | "Strum a happy chord progression on this guitar" | Preview mentions "strums". The pointer drags across the strings while each chord is held. |
+| A8 | Any app with a slider (for example System Settings → Sound) | "Drag the volume slider to the middle" | Preview: "Drag “…”". It drags only after Start. |

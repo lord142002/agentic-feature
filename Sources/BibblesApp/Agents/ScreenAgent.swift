@@ -39,14 +39,34 @@ enum ScreenStep: Equatable {
     case play([ScreenNote])
     /// Waits for a page or window (milliseconds).
     case wait(Int)
+    /// Presses at one point, moves to another, releases (sliders, moving things, drawing).
+    case drag(x: Double, y: Double, toX: Double, toY: Double, label: String, final: Bool)
 }
 
-/// One note of a `play` step: a point on the screenshot or a key, held for `ms`.
+/// A point on the screenshot (0…1 from the top left).
+struct ScreenPoint: Equatable {
+    var x: Double
+    var y: Double
+}
+
+/// One note of a `play` step. `ms` is the time until the next note starts.
 struct ScreenNote: Equatable {
     var x: Double?
     var y: Double?
     var key: String?
     var ms: Int
+    /// Pressed together with the note (a chord, kick + hi-hat).
+    var keys: [String] = []
+    var points: [ScreenPoint] = []
+    /// How long it stays down; may overlap later notes. nil: a short hit.
+    var hold: Int?
+    /// While held, the pointer moves here (a guitar strum).
+    var to: ScreenPoint?
+
+    var allKeys: [String] { (key.map { [$0] } ?? []) + keys }
+    var allPoints: [ScreenPoint] {
+        (x.flatMap { x in y.map { ScreenPoint(x: x, y: $0) } }.map { [$0] } ?? []) + points
+    }
 }
 
 struct ScreenPlan: Equatable {
@@ -74,10 +94,11 @@ enum ScreenPlanParser {
             "required": ["action"],
             "properties": [
                 "action": ["type": "string", "enum": ["menu", "press", "fill", "toggle", "choose", "mac", "save", "click", "type",
-                                                      "key", "play", "wait"]],
+                                                      "key", "play", "wait", "drag"]],
                 "x": ["type": "number"], "y": ["type": "number"], "label": ["type": "string"], "final": ["type": "boolean"],
                 "text": ["type": "string"], "keys": ["type": "string"], "ms": ["type": "integer"],
                 "notes": ["type": "array", "items": ["type": "object"]],
+                "to_x": ["type": "number"], "to_y": ["type": "number"],
                 "folder": ["type": "string"],
                 "name": ["type": "string"],
                 "path": ["type": "array", "items": ["type": "string"]],
@@ -122,6 +143,26 @@ enum ScreenPlanParser {
         return ScreenParseResult(plan: ScreenPlan(summary: String(summary.prefix(300)), steps: steps, done: done), dropped: dropped)
     }
 
+    /// {"x","y"} or {"key"}, plus optional "keys"/"points" pressed together,
+    /// "hold" (ms) and "to" {"x","y"} (drag while held). 0 ms means "at the same time as the next note".
+    static func note(from object: [String: Any]) -> ScreenNote? {
+        let raw = (object["ms"] as? NSNumber)?.intValue ?? 300
+        let ms = raw <= 0 ? 0 : min(2_000, max(30, raw))
+        var note = ScreenNote(ms: ms)
+        if let x = unit(object["x"]), let y = unit(object["y"]) { note.x = x; note.y = y }
+        if let key = object["key"] as? String, ScreenKeys.parse(key) != nil { note.key = key }
+        note.keys = ((object["keys"] as? [Any]) ?? []).compactMap { $0 as? String }.filter { ScreenKeys.parse($0) != nil }.prefix(6).map { $0 }
+        note.points = ((object["points"] as? [[String: Any]]) ?? []).prefix(6).compactMap { point in
+            guard let x = unit(point["x"]), let y = unit(point["y"]) else { return nil }
+            return ScreenPoint(x: x, y: y)
+        }
+        if let hold = (object["hold"] as? NSNumber)?.intValue { note.hold = min(4_000, max(30, hold)) }
+        if let to = object["to"] as? [String: Any], let x = unit(to["x"]), let y = unit(to["y"]) { note.to = ScreenPoint(x: x, y: y) }
+        guard !note.allKeys.isEmpty || !note.allPoints.isEmpty else { return nil }
+        if note.to != nil, note.allPoints.isEmpty { note.to = nil }
+        return note
+    }
+
     /// The model gives points from 0 to 1000 on the screenshot.
     static func unit(_ value: Any?) -> Double? {
         guard let number = (value as? NSNumber)?.doubleValue ?? (value as? String).flatMap(Double.init),
@@ -161,13 +202,13 @@ enum ScreenPlanParser {
             guard let keys = text("keys"), ScreenKeys.parse(keys) != nil else { return nil }
             return .key(keys, final: object["final"] as? Bool ?? false)
         case "play":
-            let notes = ((object["notes"] as? [[String: Any]]) ?? []).prefix(maxNotes).compactMap { note -> ScreenNote? in
-                let ms = min(2_000, max(60, (note["ms"] as? NSNumber)?.intValue ?? 300))
-                if let key = note["key"] as? String, ScreenKeys.parse(key) != nil { return ScreenNote(key: key, ms: ms) }
-                guard let x = unit(note["x"]), let y = unit(note["y"]) else { return nil }
-                return ScreenNote(x: x, y: y, ms: ms)
-            }
+            let notes = ((object["notes"] as? [[String: Any]]) ?? []).prefix(maxNotes).compactMap(note(from:))
             return notes.isEmpty ? nil : .play(notes)
+        case "drag":
+            guard let x = unit(object["x"]), let y = unit(object["y"]),
+                  let toX = unit(object["to_x"] ?? (object["to"] as? [String: Any])?["x"]),
+                  let toY = unit(object["to_y"] ?? (object["to"] as? [String: Any])?["y"]) else { return nil }
+            return .drag(x: x, y: y, toX: toX, toY: toY, label: text("label") ?? "", final: object["final"] as? Bool ?? false)
         case "wait":
             return .wait(min(5_000, max(100, (object["ms"] as? NSNumber)?.intValue ?? 1_000)))
         case "mac":
@@ -324,6 +365,76 @@ enum ScreenKeys {
             }
         }
         return (code, flags)
+    }
+}
+
+/// A `play` note in screen points, ready to run.
+struct ScreenPlayNote: Equatable {
+    var points: [CGPoint] = []
+    var keys: [String] = []
+    var ms: Int
+    var hold: Int?
+    var to: CGPoint?
+}
+
+/// Turns notes into one timeline of presses and releases (ms from the start),
+/// so chords, held notes and strums keep their timing. One mouse pointer:
+/// points "together" are clicked a few ms apart; keys really are together.
+enum ScreenPlayback {
+    enum Event: Equatable {
+        case keyDown(String), keyUp(String)
+        case mouseDown(CGPoint), mouseDrag(CGPoint), mouseUp(CGPoint)
+    }
+
+    struct Timed: Equatable {
+        var time: Int
+        let event: Event
+    }
+
+    static let shortHit = 80
+    static let pointerGap = 8
+
+    static func timeline(_ notes: [ScreenPlayNote]) -> [Timed] {
+        var events: [Timed] = []
+        var now = 0
+        var pointerFreeAt = 0
+        for note in notes {
+            let hold = note.hold ?? (note.ms > 0 ? min(shortHit, max(30, note.ms * 7 / 10)) : shortHit)
+            for key in note.keys {
+                // Pressing a key that is still held: release it first.
+                if let index = events.lastIndex(where: { $0.event == .keyUp(key) && $0.time > now }) { events[index].time = now }
+                events.append(Timed(time: now, event: .keyDown(key)))
+                events.append(Timed(time: now + hold, event: .keyUp(key)))
+            }
+            var at = max(now, pointerFreeAt)
+            for (index, point) in note.points.enumerated() {
+                if index == 0, let target = note.to {
+                    // A strum: press, slide to `to` while held, release.
+                    events.append(Timed(time: at, event: .mouseDown(point)))
+                    let steps = max(4, min(30, hold / 15))
+                    for step in 1...steps {
+                        let fraction = CGFloat(step) / CGFloat(steps)
+                        let position = CGPoint(x: point.x + (target.x - point.x) * fraction, y: point.y + (target.y - point.y) * fraction)
+                        events.append(Timed(time: at + hold * step / steps, event: .mouseDrag(position)))
+                    }
+                    events.append(Timed(time: at + hold, event: .mouseUp(target)))
+                    at += hold + pointerGap
+                } else {
+                    let press = note.points.count > 1 ? 20 : min(hold, 120)
+                    events.append(Timed(time: at, event: .mouseDown(point)))
+                    events.append(Timed(time: at + press, event: .mouseUp(point)))
+                    at += press + pointerGap
+                }
+            }
+            pointerFreeAt = max(pointerFreeAt, at)
+            now += note.ms
+        }
+        // Stable order: by time, then as written (a release before a press at the same moment).
+        return events.enumerated().sorted { ($0.element.time, $0.offset) < ($1.element.time, $1.offset) }.map(\.element)
+    }
+
+    static func duration(_ notes: [ScreenPlayNote]) -> Int {
+        timeline(notes).last?.time ?? 0
     }
 }
 
@@ -727,6 +838,12 @@ enum ScreenAX {
                 mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
 
+    static func mouseDrag(to point: CGPoint) {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)?
+            .post(tap: .cghidEventTap)
+    }
+
     static func click(at point: CGPoint) {
         let source = CGEventSource(stateID: .combinedSessionState)
         CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
@@ -765,8 +882,9 @@ enum ScreenAction {
     case click(CGPoint, label: String, final: Bool)
     case type(String)
     case key(String, final: Bool)
-    case play([(point: CGPoint?, key: String?, ms: Int)])
+    case play([ScreenPlayNote])
     case wait(Int)
+    case drag(from: CGPoint, to: CGPoint, label: String, final: Bool)
 
     var isUndoable: Bool {
         switch self {
@@ -929,12 +1047,29 @@ enum ScreenPlanValidator {
                 let risky = markedFinal || (snapshot.appName == "Messages" && ScreenKeys.parse(keys)?.code == 36)
                 add(.key(keys, final: risky), "Press \(keys)", asksFirst: risky)
             case .play(let notes):
-                let mapped = notes.map { note in (point: note.x.flatMap { x in note.y.flatMap { point(x, $0) } }, key: note.key, ms: note.ms) }
-                guard mapped.allSatisfy({ $0.point != nil || $0.key != nil }) else {
-                    drop(index, "Bibbles needs Screen Recording to click on screen"); continue
+                var mapped: [ScreenPlayNote] = []
+                var missingScreen = false
+                for note in notes {
+                    let points = note.allPoints.compactMap { point($0.x, $0.y) }
+                    if points.count != note.allPoints.count { missingScreen = true; break }
+                    mapped.append(ScreenPlayNote(points: points, keys: note.allKeys, ms: note.ms, hold: note.hold,
+                                                 to: note.to.flatMap { point($0.x, $0.y) }))
                 }
-                let seconds = Double(notes.map(\.ms).reduce(0, +)) / 1_000
-                add(.play(mapped), "Play \(notes.count) notes (about \(Int(seconds.rounded())) s)")
+                guard !missingScreen else { drop(index, "Bibbles needs Screen Recording to click on screen"); continue }
+                let seconds = Double(ScreenPlayback.duration(mapped)) / 1_000
+                let together = notes.contains { $0.allKeys.count + $0.allPoints.count > 1 || $0.ms == 0 }
+                let strums = notes.contains { $0.to != nil }
+                let extras = [together ? "chords" : nil, strums ? "strums" : nil].compactMap { $0 }
+                add(.play(mapped), "Play \(notes.count) notes" + (extras.isEmpty ? "" : " with " + extras.joined(separator: " and "))
+                    + " (about \(max(1, Int(seconds.rounded()))) s)")
+            case .drag(let x, let y, let toX, let toY, let label, let markedFinal):
+                if let reason = blockedReason(label) { drop(index, reason); continue }
+                guard let from = point(x, y), let to = point(toX, toY) else {
+                    drop(index, "Bibbles needs Screen Recording to drag on screen"); continue
+                }
+                let asks = markedFinal || isFinal(label)
+                add(.drag(from: from, to: to, label: label, final: asks), label.isEmpty ? "Drag from one spot to another" : "Drag “\(label)”",
+                    asksFirst: asks)
             case .wait(let ms):
                 add(.wait(ms), "Wait \(String(format: "%.1f", Double(ms) / 1_000)) s")
             }
@@ -1002,8 +1137,9 @@ enum ScreenAgentPrompt {
         - click {"x":512,"y":300,"label":"Search box"}: a point on the SCREENSHOT, x and y from 0 to 1000 (top-left is 0,0). Use it for things the description doesn't list (web pages, canvases). Aim at the centre of the target.
         - type {"text":"Hello Sam, …"}: types text where the cursor is (click the field first). You may write new text (an email, a message, a search) when the user asked for it.
         - key {"keys":"return"}: one key or shortcut: return, tab, escape, space, delete, arrows, pageup, pagedown, letters, digits, with cmd/shift/option/ctrl (e.g. "cmd+l").
-        - play {"notes":[{"x":120,"y":820,"ms":350},{"key":"a","ms":350}]}: a timed sequence of clicks (points on the screenshot) or keys, up to 400 notes, each 60-2000 ms. Use it to play music on a piano or instrument on screen: compose an original melody that fits the request (theme, mood), 16-64 notes, using only keys you can see; ms is the note length.
+        - play {"notes":[{"x":120,"y":820,"ms":350},{"key":"a","ms":350},{"keys":["a","j"],"ms":250},{"points":[{"x":300,"y":700},{"x":340,"y":700}],"ms":400},{"key":"d","ms":500,"hold":900},{"x":400,"y":300,"to":{"x":400,"y":620},"ms":500,"hold":180}]}: music on a piano, drums, guitar or any instrument on screen. "ms" is the time until the next note starts (0 = together with the next); "keys"/"points" are pressed together (chords, kick + hi-hat); "hold" keeps it down longer (ms, may overlap later notes); "to" drags while held (a guitar strum across the strings). Up to 400 notes. Compose an original piece that fits the request (theme, mood, style), 16-64 notes or beats, using only keys or pads you can see. Prefer keyboard keys when the page shows a key for each note (they are exact); clicks "together" land a few ms apart.
         - wait {"ms":1500}: wait for a page or window to load.
+        - drag {"x":200,"y":500,"to_x":600,"to_y":500,"label":"Volume slider"}: press, move, release. Only when a click can't do it (sliders, moving an item, drawing).
         - mac {"tool":"open_website","input":{"url":"https://…"}} | set_dark_mode {"mode":"on|off|toggle"} | set_volume {"action":"set|up|down|mute|unmute","level":0-100} | set_brightness {"action":"up|down"} | open_app {"name"}.
         Prefer menu, press, fill and save (exact) over click (approximate). For Mac-wide dark mode, volume or brightness use one mac step.
         To use the user's own details write ONLY placeholders: {{firstName}} {{lastName}} {{fullName}} {{email}} {{phone}} {{street}} {{city}} {{postalCode}} {{country}} {{company}} {{jobTitle}} {{website}}. You never see the values. Never fill passwords, card, bank, ID or one-time-code fields.
@@ -1173,20 +1309,26 @@ final class ScreenExecutor {
             ScreenAX.postKey(parsed.code, flags: parsed.flags)
             try? await Task.sleep(nanoseconds: 250_000_000)
         case .play(let notes):
-            for note in notes {
-                if stopRequested || Task.isCancelled { break }
-                let hold = UInt64(min(note.ms, 400)) * 1_000_000 * 7 / 10
-                if let point = note.point {
-                    ScreenAX.mouse(at: point, down: true)
-                    try? await Task.sleep(nanoseconds: hold)
-                    ScreenAX.mouse(at: point, down: false)
-                } else if let key = note.key, let parsed = ScreenKeys.parse(key) {
-                    ScreenAX.postKey(parsed.code, flags: parsed.flags, down: true)
-                    try? await Task.sleep(nanoseconds: hold)
-                    ScreenAX.postKey(parsed.code, flags: parsed.flags, down: false)
-                }
-                try? await Task.sleep(nanoseconds: UInt64(note.ms) * 1_000_000 - hold)
+            await play(ScreenPlayback.timeline(notes))
+        case .drag(let from, let to, let label, let isFinalStep):
+            for end in [from, to] {
+                let name = ScreenAX.titleAt(end) ?? ""
+                if ScreenSafety.neverWord(in: name) != nil { return "“\(name)” is never touched by Bibbles" }
             }
+            let names = [ScreenAX.titleAt(from) ?? "", ScreenAX.titleAt(to) ?? "", label]
+            if isFinalStep || names.contains(where: { ScreenSafety.blockedWord(in: $0) != nil }) {
+                let name = names.first { !$0.isEmpty } ?? "this"
+                guard confirm("Drag “\(name)”", app) else { return "you stopped before dragging “\(name)”" }
+            }
+            ScreenAX.click(at: from)
+            ScreenAX.mouse(at: from, down: true)
+            for step in 1...12 {
+                let fraction = CGFloat(step) / 12
+                ScreenAX.mouseDrag(to: CGPoint(x: from.x + (to.x - from.x) * fraction, y: from.y + (to.y - from.y) * fraction))
+                try? await Task.sleep(nanoseconds: 30_000_000)
+            }
+            ScreenAX.mouse(at: to, down: false)
+            try? await Task.sleep(nanoseconds: 300_000_000)
         case .wait(let ms):
             try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
         case .mac(let call):
@@ -1198,6 +1340,41 @@ final class ScreenExecutor {
             }
         }
         return nil
+    }
+
+    /// Runs a timeline at its own clock (no drift from note to note). Stop
+    /// releases everything still held.
+    private func play(_ timeline: [ScreenPlayback.Timed]) async {
+        let start = Date()
+        var heldKeys: Set<String> = []
+        var mouseDown: CGPoint?
+        for item in timeline {
+            if stopRequested || Task.isCancelled { break }
+            let wait = Double(item.time) / 1_000 - Date().timeIntervalSince(start)
+            if wait > 0 { try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000)) }
+            switch item.event {
+            case .keyDown(let key):
+                guard let parsed = ScreenKeys.parse(key) else { continue }
+                ScreenAX.postKey(parsed.code, flags: parsed.flags, down: true)
+                heldKeys.insert(key)
+            case .keyUp(let key):
+                guard let parsed = ScreenKeys.parse(key) else { continue }
+                ScreenAX.postKey(parsed.code, flags: parsed.flags, down: false)
+                heldKeys.remove(key)
+            case .mouseDown(let point):
+                ScreenAX.mouse(at: point, down: true)
+                mouseDown = point
+            case .mouseDrag(let point):
+                ScreenAX.mouseDrag(to: point)
+            case .mouseUp(let point):
+                ScreenAX.mouse(at: point, down: false)
+                mouseDown = nil
+            }
+        }
+        for key in heldKeys {
+            if let parsed = ScreenKeys.parse(key) { ScreenAX.postKey(parsed.code, flags: parsed.flags, down: false) }
+        }
+        if let point = mouseDown { ScreenAX.mouse(at: point, down: false) }
     }
 
     /// ⌘⇧G, the folder path, Return: macOS's own "Go to folder" in save sheets.

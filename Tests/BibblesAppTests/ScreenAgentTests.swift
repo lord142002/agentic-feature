@@ -157,7 +157,7 @@ final class ScreenAgentTests: XCTestCase {
             .click(x: 0.5, y: 0.25, label: "Search", final: false),
             .type("hello"),
             .key("cmd+l", final: false),
-            .play([ScreenNote(x: 0.1, y: 0.9, ms: 300), ScreenNote(key: "a", ms: 60)]),
+            .play([ScreenNote(x: 0.1, y: 0.9, ms: 300), ScreenNote(key: "a", ms: 50)]),
             .wait(5_000)
         ], "cmd+q is never pressed; points outside 0…1000 are dropped; times are clamped")
         XCTAssertEqual(parsed.dropped.map(\.index), [3, 6])
@@ -179,6 +179,61 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertEqual(point, CGPoint(x: 250, y: 400))
         let top = ScreenGeometry.globalPoint(x: 0, y: 0, displayFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800), primaryHeight: 800)
         XCTAssertEqual(top, CGPoint(x: 0, y: 0), "top-left of the screenshot is top-left of the screen")
+    }
+
+    func testParsesChordsHoldsStrumsAndDrags() {
+        let text = #"{"summary":"","steps":[{"action":"play","notes":[{"keys":["a","j"],"ms":250},{"key":"d","ms":0},{"key":"f","ms":500,"hold":900},{"x":400,"y":300,"to":{"x":400,"y":620},"ms":500,"hold":180},{"points":[{"x":100,"y":100},{"x":200,"y":100}],"ms":300},{"keys":["cmd+q"],"ms":100}]},{"action":"drag","x":200,"y":500,"to_x":600,"to_y":500,"label":"Volume"}]}"#
+        let steps = ScreenPlanParser.parse(text).plan?.steps
+        guard case .play(let notes)? = steps?.first else { return XCTFail("play") }
+        XCTAssertEqual(notes.count, 5, "a note with only a forbidden key is dropped")
+        XCTAssertEqual(notes[0].allKeys, ["a", "j"])
+        XCTAssertEqual(notes[1].ms, 0, "0 ms = together with the next note")
+        XCTAssertEqual(notes[2].hold, 900)
+        XCTAssertEqual(notes[3].to, ScreenPoint(x: 0.4, y: 0.62))
+        XCTAssertEqual(notes[4].allPoints.count, 2)
+        XCTAssertEqual(steps?.last, .drag(x: 0.2, y: 0.5, toX: 0.6, toY: 0.5, label: "Volume", final: false))
+    }
+
+    func testTimelineKeepsChordsTogetherHoldsLongAndStrums() {
+        let a = CGPoint(x: 10, y: 10), b = CGPoint(x: 50, y: 10), top = CGPoint(x: 0, y: 0), bottom = CGPoint(x: 0, y: 100)
+        let timeline = ScreenPlayback.timeline([
+            ScreenPlayNote(keys: ["a", "j"], ms: 250),            // chord at 0
+            ScreenPlayNote(keys: ["d"], ms: 500, hold: 900),       // held over the next notes
+            ScreenPlayNote(keys: ["d"], ms: 200),                  // pressed again while held: released first
+            ScreenPlayNote(points: [a, b], ms: 300),               // two clicks "together"
+            ScreenPlayNote(points: [top], ms: 400, hold: 150, to: bottom)  // strum
+        ])
+        func times(_ event: ScreenPlayback.Event) -> [Int] { timeline.filter { $0.event == event }.map(\.time) }
+        XCTAssertEqual(times(.keyDown("a")), [0])
+        XCTAssertEqual(times(.keyDown("j")), [0], "chords are pressed together")
+        XCTAssertEqual(times(.keyDown("d")), [250, 750])
+        XCTAssertEqual(times(.keyUp("d")).first, 750, "a held key is released before it's pressed again")
+        XCTAssertEqual(times(.mouseDown(a)), [950])
+        XCTAssertEqual(times(.mouseDown(b)), [978], "one pointer: clicks together land a few ms apart")
+        XCTAssertEqual(times(.mouseDown(top)), [1250])
+        XCTAssertEqual(times(.mouseUp(bottom)), [1400])
+        XCTAssertGreaterThan(timeline.filter { if case .mouseDrag = $0.event { return true } else { return false } }.count, 3)
+        XCTAssertEqual(timeline.map(\.time), timeline.map(\.time).sorted(), "one timeline, in order")
+        let downs = timeline.filter { if case .keyDown = $0.event { return true } else { return false } }.count
+        let ups = timeline.filter { if case .keyUp = $0.event { return true } else { return false } }.count
+        XCTAssertEqual(downs, ups, "every key is released")
+    }
+
+    @MainActor
+    func testDragAndChordPreview() {
+        var withScreenshot = snapshot()
+        withScreenshot.screenFrame = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+        let plan = ScreenPlan(summary: "", steps: [
+            .play([ScreenNote(ms: 250, keys: ["a", "j"]), ScreenNote(x: 0.4, y: 0.3, ms: 400, hold: 150, to: ScreenPoint(x: 0.4, y: 0.6))]),
+            .drag(x: 0.2, y: 0.5, toX: 0.6, toY: 0.5, label: "Volume", final: false),
+            .drag(x: 0.2, y: 0.5, toX: 0.6, toY: 0.5, label: "Empty Trash", final: false)
+        ])
+        let preview = ScreenPlanValidator.preview(plan, snapshot: withScreenshot, request: "play and turn it up", details: me)
+        XCTAssertEqual(preview.lines.map(\.text), ["Play 2 notes with chords and strums (about 1 s)", "Drag “Volume”"])
+        XCTAssertEqual(preview.dropped.count, 1, "never-pressed things can't be dragged either")
+        let noScreen = ScreenPlanValidator.preview(ScreenPlan(summary: "", steps: [.drag(x: 0, y: 0, toX: 1, toY: 1, label: "", final: false)]),
+                                                   snapshot: snapshot(), request: "", details: me)
+        XCTAssertTrue(noScreen.isEmpty)
     }
 
     @MainActor
