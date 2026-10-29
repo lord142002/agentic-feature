@@ -2015,6 +2015,7 @@ private struct LocalModeBadge: View {
 @MainActor
 private struct DeveloperPage: View {
     @ObservedObject private var controls = DeveloperControls.shared
+    @State private var detailsDraft = MyDetailsStore.load()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2050,6 +2051,10 @@ private struct DeveloperPage: View {
                         .padding(.bottom, 16)
                 }
                 RowDivider()
+                toggleRow("AI Agents (Screen)",
+                          "Requests like \"Click Export and save it as a PDF\" or \"Fill in this sign-up form with my details\" act in the app you're using, after a preview and Start. It never presses Submit, Sign up, Send, Pay, Buy or Delete, and never fills passwords, cards or IDs. \"With my details\" is matched on this Mac with no AI. Other requests need Local mode.",
+                          isOn: controls.screenAgent, set: { controls.setScreenAgent($0) })
+                RowDivider()
                 SettingRow(title: "Run Agent Plan Test Set",
                            detail: "Plans \(AgentPlanTestSet.cases.count) Files requests (EN, ES, DE, FR, PT, JA, Hindi/Hinglish) against a fake folder summary on every planner with a saved key. Planning only, no files touched. Copies valid JSON %, allowed actions %, correct plan %, average and slowest ms and cost per plan.") {
                     PillButton(title: controls.agentTestRunning ? "Running…" : "Run", prominent: !controls.agentTestRunning,
@@ -2065,6 +2070,36 @@ private struct DeveloperPage: View {
                     .padding(.horizontal, 22)
                     .padding(.bottom, 16)
                 }
+            }
+            SectionLabel(text: "My details (for forms)")
+            Card {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Used only by the Screen agent's \"fill … with my details\". Saved in this Mac's Keychain, matched to form fields on this Mac, and never sent to an AI.")
+                        .font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(MyDetails.Key.allCases.filter { $0 != .fullName }) { key in
+                        HStack {
+                            Text(key.title).font(.system(size: 13)).foregroundStyle(.white.opacity(0.8)).frame(width: 120, alignment: .leading)
+                            TextField(key.title, text: Binding(get: { detailsDraft.value(key) },
+                                                               set: { detailsDraft.set(key, $0) }))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                    HStack(spacing: 10) {
+                        PillButton(title: controls.contactsLoading ? "Reading…" : "Use my Contacts card", symbol: "person.crop.rectangle") {
+                            controls.detailsFromContacts(into: detailsDraft) { detailsDraft = $0 }
+                        }
+                        .disabled(controls.contactsLoading)
+                        Spacer()
+                        PillButton(title: "Clear") {
+                            controls.clearDetails()
+                            detailsDraft = MyDetails()
+                        }
+                        PillButton(title: "Save", prominent: true) { controls.saveDetails(detailsDraft) }
+                    }
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
             }
             SectionLabel(text: "Routing")
             Card {

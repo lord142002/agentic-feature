@@ -17,6 +17,8 @@ enum HybridRoute: String, CaseIterable, Codable {
     #if BIBBLES_DEVELOPER
     /// The Files agent (developer builds, only with "AI Agents (Files)" on).
     case agentFiles = "agent_files"
+    /// The Screen agent (developer builds, only with "AI Agents (Screen)" on).
+    case agentScreen = "agent_screen"
     #endif
     case unclear
 }
@@ -156,6 +158,11 @@ enum HybridRouter {
         // (many files) or command.
         if AgentSettings.filesEnabled, [.fileAction, .command].contains(today) || intentRouter.isFileRequest(text) {
             return .unclear("files: router decides")
+        }
+        // With the Screen agent on, requests to act on screen go to the AI router
+        // (agent_screen, form_fill, command or screen).
+        if AgentSettings.screenEnabled, [.formFill, .command].contains(today) || ScreenAgentDetector.mightBeAction(text) {
+            return .unclear("screen: router decides")
         }
         #endif
 
@@ -334,6 +341,7 @@ enum HybridRouter {
         #if BIBBLES_DEVELOPER
         // The Files agent route exists only while its developer toggle is on.
         if result.route == .agentFiles, !AgentSettings.filesEnabled { return nil }
+        if result.route == .agentScreen, !AgentSettings.screenEnabled { return nil }
         #endif
         return result.route
     }

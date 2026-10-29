@@ -33,3 +33,25 @@ For each test, ask by voice (hold Control + Option) or by typing (double-tap Con
 - **Too big:** a folder with more than 1,000 items asks you to narrow the request. Nothing is scanned further.
 - **No server:** with Local mode on, no request goes to `bibbles-api` (check with a proxy such as Proxyman). The planner request goes to OpenRouter or Anthropic and contains only the request and the folder **summary**. No file contents are sent.
 - **Labels:** the card header says "Agent Task" in the user's language. No model name is shown anywhere outside Settings → Developer.
+
+---
+
+# Screen agent: manual test sheet
+
+**Before you start:**
+1. Turn on **Settings → Developer → AI Agents (Screen)**. Requests other than "fill … with my details" also need **Local mode** and your OpenRouter key.
+2. In **My details**, press **Use my Contacts card**. macOS asks for Contacts access once. Check the fields, then press **Save**.
+3. Bibbles Dev needs **Accessibility** permission.
+
+| # | Where | Say or type | Expected |
+|---|---|---|---|
+| S1 | Safari or Chrome, any sign-up form (for example a newsletter or test-account page) | "Fill in this sign-up form with my details" | The card says **ON THIS MAC · NO AI**. The preview lists "Type “Mohit” into “First name”" and so on. Passwords and card fields are never listed. Start fills them. **Sign up is NOT pressed.** The summary says to press it yourself. |
+| S2 | The same form | Press **Undo** | The typed fields are empty again. |
+| S3 | TextEdit or Pages with a document open | "Click Export and save it as a PDF" | Preview: "Choose File ▸ Export as PDF…", then "Press “Save”", marked "no undo". Start opens the save sheet and presses Save. The PDF appears next to the document. |
+| S4 | Anywhere | "Go to Settings and turn on dark mode" | Preview: one step, turn dark mode on. Start switches dark mode on. Undo switches it back. |
+| S5 | A form with "Remember me" ticked | "Untick remember me" | Preview: "Turn off “Remember me”". Start unticks it. |
+| S6 | A checkout page | "Fill my details and pay" | The details are filled. **Pay** is skipped with "Bibbles never presses …". |
+| S7 | Anywhere | "Where is the Export button?" | **No agent.** Ordinary screen help points at it. |
+| S8 | Turn **AI Agents (Screen)** off and repeat S1 | — | No agent card. Today's form fill runs, using placeholders like [Your Name]. |
+
+**Privacy check:** with a proxy such as Proxyman, S1 sends **no request at all**. S3 sends one planner request with menu and button titles and field labels only. It never contains your details or what is typed in the fields.

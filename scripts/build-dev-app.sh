@@ -31,6 +31,8 @@ if os.environ.get('DEVELOPER', '0') == '1':
     # Its own bundle id: separate macOS permissions and Keychain items.
     info['CFBundleIdentifier'] = info['CFBundleIdentifier'] + '.dev'
     info['CFBundleName'] = 'Bibbles Dev'
+    # Screen agent: "Use my Contacts card" in Settings → Developer → My details.
+    info['NSContactsUsageDescription'] = 'Bibbles reads your own Contacts card only when you ask it to fill My details for forms.'
 for environment, key in [('BIBBLES_POSTHOG_PROJECT_TOKEN', 'BibblesPostHogProjectToken'),
                          ('BIBBLES_POSTHOG_HOST', 'BibblesPostHogHost')]:
     value = os.environ.get(environment, '').strip()

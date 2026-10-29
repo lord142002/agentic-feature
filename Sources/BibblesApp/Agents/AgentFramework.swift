@@ -15,6 +15,16 @@ enum AgentSettings {
         get { testOverride ?? UserDefaults.standard.bool(forKey: filesKey) }
         set { UserDefaults.standard.set(newValue, forKey: filesKey) }
     }
+
+    static let screenKey = "bibbles.dev.agents.screen"
+    /// Tests only.
+    static var screenTestOverride: Bool?
+
+    /// "AI Agents (Screen)", default OFF.
+    static var screenEnabled: Bool {
+        get { screenTestOverride ?? UserDefaults.standard.bool(forKey: screenKey) }
+        set { UserDefaults.standard.set(newValue, forKey: screenKey) }
+    }
 }
 
 /// What the user asked, in their own words and language.
@@ -483,16 +493,31 @@ enum AgentPlanner {
     }
 
     static func plan(system: String, user: String, session: URLSession = .shared) async throws -> Attempt {
+        let (reply, parsed) = try await planned(system: system, user: user,
+                                                models: [ModelCatalog.selected(.agentPlanner), ModelCatalog.selected(.agentBackup)],
+                                                session: session) { text -> AgentParseResult? in
+            let parsed = AgentPlanParser.parse(text)
+            return parsed.isValid ? parsed : nil
+        }
+        return Attempt(reply: reply, parsed: parsed)
+    }
+
+    /// One planning call per model in order (planner, then backup) until one
+    /// returns a plan `parse` accepts; each call is limited to 5 seconds.
+    static func planned<Parsed>(system: String, user: String, models: [ModelChoice],
+                                schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan",
+                                session: URLSession,
+                                parse: (String) -> Parsed?) async throws -> (AgentPlannerReply, Parsed) {
         guard LocalMode.isOn else { throw AgentError.needsLocalMode }
         var lastProblem = "no reply"
-        for (index, model) in [ModelCatalog.selected(.agentPlanner), ModelCatalog.selected(.agentBackup)].enumerated() {
+        for (index, model) in models.enumerated() {
             do {
                 let reply = try await withTimeout(timeout) {
-                    try await ask(model: model, system: system, user: user, backup: index > 0, session: session)
+                    try await ask(model: model, system: system, user: user, backup: index > 0, session: session,
+                                  schema: schema, schemaName: schemaName)
                 }
-                let parsed = AgentPlanParser.parse(reply.text)
-                if parsed.isValid { return Attempt(reply: reply, parsed: parsed) }
-                lastProblem = parsed.error ?? "invalid plan"
+                if let parsed = parse(reply.text) { return (reply, parsed) }
+                lastProblem = "invalid plan"
             } catch is CancellationError {
                 throw CancellationError()
             } catch AgentError.needsLocalMode {
@@ -509,9 +534,10 @@ enum AgentPlanner {
     }
 
     static func ask(model: ModelChoice, system: String, user: String, backup: Bool,
-                    session: URLSession) async throws -> AgentPlannerReply {
+                    session: URLSession, schema: [String: Any] = AgentPlanParser.schema,
+                    schemaName: String = "agent_plan") async throws -> AgentPlannerReply {
         let started = Date()
-        let request = try request(model: model, system: system, user: user)
+        let request = try request(model: model, system: system, user: user, schema: schema, schemaName: schemaName)
         let data = try await LocalBackend.send(request, provider: model.provider == .anthropic ? "Anthropic" : "OpenRouter",
                                                slot: model.provider.keySlot, session: session)
         guard var text = ClaudeAPI.responseText(from: data) else {
@@ -521,7 +547,7 @@ enum AgentPlanner {
         let usage = LocalCostLog.usage(in: data)
         let reply = AgentPlannerReply(text: text, model: model, milliseconds: Int(Date().timeIntervalSince(started) * 1000),
                                       inputTokens: usage.input, outputTokens: usage.output, usedBackup: backup)
-        LocalCostLog.shared.record(LocalCostLog.Entry(date: Date(), feature: backup ? "agent plan (backup)" : "agent plan",
+        LocalCostLog.shared.record(LocalCostLog.Entry(date: Date(), feature: schemaName.replacingOccurrences(of: "_", with: " ") + (backup ? " (backup)" : ""),
                                                       model: model.id, inputTokens: usage.input, outputTokens: usage.output,
                                                       cost: reply.estimatedCost, milliseconds: reply.milliseconds))
         return reply
@@ -533,7 +559,8 @@ enum AgentPlanner {
         model.provider == .anthropic && model.acceptsTemperature
     }
 
-    static func request(model: ModelChoice, system: String, user: String) throws -> URLRequest {
+    static func request(model: ModelChoice, system: String, user: String,
+                        schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan") throws -> URLRequest {
         switch model.provider {
         case .openrouter:
             var body: [String: Any] = [
@@ -543,7 +570,7 @@ enum AgentPlanner {
                 "provider": LocalBackend.privacy,
                 "reasoning": ["effort": "low"],
                 "response_format": ["type": "json_schema",
-                                    "json_schema": ["name": "agent_plan", "strict": false, "schema": AgentPlanParser.schema]],
+                                    "json_schema": ["name": schemaName, "strict": false, "schema": schema]],
                 "usage": ["include": true]
             ]
             if model.acceptsTemperature { body["temperature"] = 0 }

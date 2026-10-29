@@ -24,6 +24,9 @@ final class DeveloperControls: ObservableObject {
     @Published private(set) var costCount = 0
     /// "AI Agents (Files)", default OFF.
     @Published private(set) var filesAgent = AgentSettings.filesEnabled
+    /// "AI Agents (Screen)", default OFF.
+    @Published private(set) var screenAgent = AgentSettings.screenEnabled
+    @Published private(set) var contactsLoading = false
     @Published private(set) var agentTestRunning = false
     @Published private(set) var agentTestProgress: (done: Int, total: Int)?
     /// Feature → picked model ID (Models page).
@@ -49,6 +52,7 @@ final class DeveloperControls: ObservableObject {
         keyStatus = Dictionary(uniqueKeysWithValues: DeveloperKeySlot.allCases.map { ($0, DeveloperKeychain.status($0)) })
         localMode = LocalMode.isOn
         filesAgent = AgentSettings.filesEnabled
+        screenAgent = AgentSettings.screenEnabled
         models = Dictionary(uniqueKeysWithValues: ModelFeature.allCases.map { ($0, ModelCatalog.selected($0).id) })
         costCount = LocalCostLog.shared.entries.count
         costTotal = LocalCostLog.shared.totalCost
@@ -99,6 +103,41 @@ final class DeveloperControls: ObservableObject {
         AgentSettings.filesEnabled = on
         refresh()
         show(on ? "Files agent on: \"clean up my Downloads\" now shows a preview first" : "Files agent off: today's behaviour")
+    }
+
+    func setScreenAgent(_ on: Bool) {
+        AgentSettings.screenEnabled = on
+        refresh()
+        show(on ? "Screen agent on: \"click Export…\" or \"fill this with my details\" shows a preview first" : "Screen agent off: today's behaviour")
+    }
+
+    // MARK: My details (Keychain only, never sent to an AI)
+
+    @discardableResult
+    func saveDetails(_ details: MyDetails) -> Bool {
+        let ok = MyDetailsStore.save(details)
+        show(ok ? "My details saved in Keychain" : "Couldn't save to Keychain", error: !ok)
+        return ok
+    }
+
+    func clearDetails() {
+        MyDetailsStore.clear()
+        show("My details removed")
+    }
+
+    /// Fills empty fields from the Contacts "My Card" (macOS asks once).
+    func detailsFromContacts(into draft: MyDetails, completion: @escaping (MyDetails) -> Void) {
+        contactsLoading = true
+        Task { @MainActor in
+            defer { self.contactsLoading = false }
+            do {
+                let card = try await ContactsMeCard.load()
+                completion(draft.merged(with: card))
+                self.show("Filled from your Contacts card: check, then Save")
+            } catch {
+                self.show(error.localizedDescription, error: true)
+            }
+        }
     }
 
     /// Plans the 30 test requests against a fake folder summary on every

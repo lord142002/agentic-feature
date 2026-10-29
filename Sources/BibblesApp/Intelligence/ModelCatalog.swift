@@ -37,7 +37,7 @@ enum ModelFeature: String, CaseIterable, Identifiable {
         case .router: return "Router"
         case .agentPlanner: return "Agent planner"
         case .agentBackup: return "Agent backup"
-        case .screenAgent: return "Screen agent (later)"
+        case .screenAgent: return "Screen agent"
         }
     }
 }
@@ -86,7 +86,7 @@ enum ModelCatalog {
         case .router: return [haiku45]
         case .agentPlanner: return [gpt5Mini, haiku55, gemini38Flash, haiku45, sonnet55]
         case .agentBackup: return [haiku45, haiku55]
-        case .screenAgent: return [gemini38Flash]
+        case .screenAgent: return [gemini38Flash, gpt5Mini, haiku55, sonnet55]
         }
     }
 

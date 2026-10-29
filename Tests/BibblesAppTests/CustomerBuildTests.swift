@@ -16,6 +16,7 @@ final class CustomerBuildTests: XCTestCase {
 
     func testNoAgentRoute() {
         XCTAssertNil(HybridRoute(rawValue: "agent_files"))
+        XCTAssertNil(HybridRoute(rawValue: "agent_screen"))
         XCTAssertFalse(RouterPrompt.system.contains("agent_files"))
         XCTAssertEqual(RouterPrompt.system, RouterPrompt.base)
     }

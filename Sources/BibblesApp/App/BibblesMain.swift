@@ -925,6 +925,14 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             startFilesAgent(transcript, layer: "keyword")
             return
         }
+        // "AI Agents (Screen)" on: "fill … with my details" is planned on the Mac (no AI).
+        if intent != .dictate, AgentSettings.screenEnabled, ScreenAgentDetector.isDetailsFill(transcript) {
+            ToolGateLog.shared.recordRouting(
+                RoutingDecision(source: .keyword, override: nil, keywordStrength: .strong, reason: "screen agent details fill"),
+                text: transcript, finalRoute: "agent_screen", tier: "agent")
+            startScreenAgent(transcript, layer: "keyword")
+            return
+        }
         #endif
         var intent = intent
         var hereWrite = false
@@ -1058,6 +1066,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         case .agentFiles:
             startFilesAgent(transcript, layer: "router")
             return ("agent_files", "agent")
+        case .agentScreen:
+            startScreenAgent(transcript, layer: "router")
+            return ("agent_screen", "agent")
         #endif
         case .unclear:
             return fallBack()
@@ -2407,6 +2418,27 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         dismissTask?.cancel()
         overlay.hide()
         let session = FilesAgentSession(text: transcript, layer: layer)
+        let label = session.strings.label
+        session.onFinished = { [weak self] summary in
+            guard let self else { return }
+            self.chatStore.recordExchange(userText: transcript, assistantText: summary)
+            self.interaction.modelLabel = label
+            if speak { self.voiceReply.speak(summary) }
+        }
+        agentPanel.show(session)
+        session.start()
+    }
+
+    /// The Screen agent works in the app the user was in (never in Bibbles).
+    private func startScreenAgent(_ transcript: String, layer: String) {
+        pendingVisualQuestion = nil
+        beginTaskConversationIfNeeded(for: transcript)
+        let speak = shouldSpeakNextAnswer && voiceRepliesEnabled
+        shouldSpeakNextAnswer = false
+        voiceReply.stop()
+        dismissTask?.cancel()
+        overlay.hide()
+        let session = ScreenAgentSession(text: transcript, app: lastExternalApp, inserter: textInserter, layer: layer)
         let label = session.strings.label
         session.onFinished = { [weak self] summary in
             guard let self else { return }
