@@ -22,6 +22,8 @@ final class DeveloperControls: ObservableObject {
     /// "Local mode (use my keys, skip the server)", default OFF.
     @Published private(set) var localMode = LocalMode.isOn
     @Published private(set) var costCount = 0
+    /// "AI Agents (Files)", default OFF.
+    @Published private(set) var filesAgent = AgentSettings.filesEnabled
     /// Feature → picked model ID (Models page).
     @Published private(set) var models: [ModelFeature: String] = [:]
     @Published private(set) var costTotal = 0.0
@@ -44,6 +46,7 @@ final class DeveloperControls: ObservableObject {
         aiRouter = HybridRouter.isEnabled
         keyStatus = Dictionary(uniqueKeysWithValues: DeveloperKeySlot.allCases.map { ($0, DeveloperKeychain.status($0)) })
         localMode = LocalMode.isOn
+        filesAgent = AgentSettings.filesEnabled
         models = Dictionary(uniqueKeysWithValues: ModelFeature.allCases.map { ($0, ModelCatalog.selected($0).id) })
         costCount = LocalCostLog.shared.entries.count
         costTotal = LocalCostLog.shared.totalCost
@@ -86,6 +89,14 @@ final class DeveloperControls: ObservableObject {
         if !hasKey(.anthropic) { missing.append("Anthropic") }
         guard !missing.isEmpty else { return nil }
         return "Local mode needs your \(missing.joined(separator: " and ")) key\(missing.count == 1 ? "" : "s") (below)."
+    }
+
+    // MARK: Agents
+
+    func setFilesAgent(_ on: Bool) {
+        AgentSettings.filesEnabled = on
+        refresh()
+        show(on ? "Files agent on: \"clean up my Downloads\" now shows a preview first" : "Files agent off: today's behaviour")
     }
 
     // MARK: Models (local testing)
@@ -168,18 +179,24 @@ final class DeveloperControls: ObservableObject {
     @discardableResult
     func copyLog() -> Bool {
         refresh()
-        guard !ToolGateLog.shared.entries.isEmpty else {
+        guard !ToolGateLog.shared.entries.isEmpty || !AgentLog.shared.entries.isEmpty else {
             show(ToolGateStrings.logEmpty, error: true)
             return false
         }
+        var table = ToolGateLog.shared.table()
+        if !AgentLog.shared.entries.isEmpty {
+            // Agent runs: counts and timings only, never file names or the user's words.
+            table += "\n\nAgents\n\n" + AgentLog.shared.table()
+        }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(ToolGateLog.shared.table(), forType: .string)
+        NSPasteboard.general.setString(table, forType: .string)
         show("\(ToolGateStrings.logCopied) (\(ToolGateLog.shared.entries.count))")
         return true
     }
 
     func clearLog() {
         ToolGateLog.shared.clear()
+        AgentLog.shared.clear()
         show(ToolGateStrings.menuClearLog)
         refresh()
     }

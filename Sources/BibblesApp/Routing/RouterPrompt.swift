@@ -8,7 +8,8 @@ enum RouterPrompt {
         "Flags: \(flags.json)\nRequest: <<<\(text)>>>"
     }
 
-    static let system = """
+    /// The prompt every customer build sends.
+    static let base = """
     You are the request router of Bibbles, a voice and text assistant for Mac used worldwide. \
     Read ONE user request (often transcribed speech: long, rambling, with fillers, in any language or a mix of languages) \
     plus context flags, and decide which single task the user wants done NOW. The real request is often at the END, after background. \
@@ -97,4 +98,24 @@ enum RouterPrompt {
     "the thing, you know, with the stuff" -> {"route":"unclear","confidence":0.4}
     "Help me with this" [textFieldFocused] -> {"route":"unclear","confidence":0.45}
     """
+
+    static var system: String {
+        #if BIBBLES_DEVELOPER
+        if AgentSettings.filesEnabled { return withFilesAgent }
+        #endif
+        return base
+    }
+
+    #if BIBBLES_DEVELOPER
+    /// Developer builds with "AI Agents (Files)" on: organising MANY files is
+    /// its own route; single-file actions stay `file_action`.
+    static let withFilesAgent = base
+        .replacingOccurrences(of: "file_action: find, rename, move, organise or create files or folders on the Mac.",
+                              with: "file_action: find, rename, open or create ONE file or folder on the Mac.\n"
+                                + "agent_files: organise, clean up, sort or move MANY files in a folder by a rule (type, date, name), or move old files to the Trash.")
+        .replacingOccurrences(of: #""tidy up my downloads folder into folders by type" -> {"route":"file_action","confidence":0.9}"#,
+                              with: #""tidy up my downloads folder into folders by type" -> {"route":"agent_files","confidence":0.92}"# + "\n"
+                                + #""Ordne alle Bildschirmfotos auf meinem Schreibtisch nach Monat" -> {"route":"agent_files","confidence":0.9}"# + "\n"
+                                + #""desktop pe jitne bhi purane installers hain unhe trash mein daal do" -> {"route":"agent_files","confidence":0.88}"#)
+    #endif
 }

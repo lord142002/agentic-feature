@@ -2033,6 +2033,17 @@ private struct DeveloperPage: View {
                         .padding(.bottom, 16)
                 }
             }
+            SectionLabel(text: "Agents")
+            Card {
+                toggleRow("AI Agents (Files)",
+                          "Requests like \"Clean up my Downloads folder\" or \"Organize my screenshots by month\" (any language) plan rules with one AI call, show a preview, change nothing before Start, and can be undone for 30 minutes. Local mode only for now. Off: today's behaviour.",
+                          isOn: controls.filesAgent, set: { controls.setFilesAgent($0) })
+                if controls.filesAgent && !controls.localMode {
+                    AccountNotice(message: "Turn on Local mode above: agents use your keys for now.", isError: true)
+                        .padding(.horizontal, 22)
+                        .padding(.bottom, 16)
+                }
+            }
             SectionLabel(text: "Routing")
             Card {
                 toggleRow("Tool Gate",

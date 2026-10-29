@@ -101,6 +101,13 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         },
         onOpenItem: { [weak self] item in
             guard let self else { return }
+            #if BIBBLES_DEVELOPER
+            // A Files agent run that can still be undone: show its Done · Undo card.
+            if let session = AgentUndoRegistry.shared.session(forAnswer: item.answer) {
+                self.agentPanel.show(session)
+                return
+            }
+            #endif
             if self.chatStore.conversations.contains(where: { $0.id == item.conversationID }) {
                 self.chatStore.selectedID = item.conversationID
             }
@@ -116,6 +123,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         onQuit: { [weak self] in self?.quit() },
         onVisibilityChanged: { [weak self] in self?.updateEscapeCapture() }
     )
+    #if BIBBLES_DEVELOPER
+    private lazy var agentPanel = AgentPanelController()
+    #endif
     /// The "Welcome to Bibbles" guide (first launch, the notch's info button, Help).
     private lazy var welcomeWindow: WelcomeWindowController = WelcomeWindowController(
         onSetUpPermissions: { [weak self] in self?.showPermissionStatus() },
@@ -625,6 +635,11 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         addItem(to: menu, "Quick Web Search…", #selector(openQuickWebSearch))
         addItem(to: menu, "Show Last Answer", #selector(showLastAnswer)).isEnabled = interaction.lastAnswer != nil
         addItem(to: menu, "Copy Last Answer", #selector(copyLastAnswer)).isEnabled = interaction.lastAnswer != nil
+        #if BIBBLES_DEVELOPER
+        if AgentUndoRegistry.shared.latest != nil {
+            addItem(to: menu, "Undo Last Agent Task", #selector(undoLastAgentTask))
+        }
+        #endif
         if targetHighlight.hasDrawing || targetHighlight.canUndoDrawing {
             addItem(to: menu, "Undo Drawing", #selector(undoScreenDrawing)).isEnabled = targetHighlight.canUndoDrawing
             addItem(to: menu, "Clear Drawings", #selector(clearScreenDrawings), detail: "Esc")
@@ -901,6 +916,16 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     /// requests they can't decide. The user's words are never changed.
     private func dispatch(_ intent: BibblesIntent, transcript: String) {
         if intent != .dictate { stopWalkthrough() }
+        #if BIBBLES_DEVELOPER
+        // "AI Agents (Files)" on: organising many files goes to the Files agent.
+        if intent != .dictate, AgentSettings.filesEnabled, FilesAgentDetector.isRequest(transcript) {
+            ToolGateLog.shared.recordRouting(
+                RoutingDecision(source: .keyword, override: nil, keywordStrength: .strong, reason: "files agent keywords"),
+                text: transcript, finalRoute: "agent_files", tier: "agent")
+            startFilesAgent(transcript, layer: "keyword")
+            return
+        }
+        #endif
         var intent = intent
         var hereWrite = false
         // Always on: "…write a mail to my HR here" is not a screen question.
@@ -1029,6 +1054,11 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             usageMeter.recordAsk()
             performFileAction(transcript)
             return (route.rawValue, "agent")
+        #if BIBBLES_DEVELOPER
+        case .agentFiles:
+            startFilesAgent(transcript, layer: "router")
+            return ("agent_files", "agent")
+        #endif
         case .unclear:
             return fallBack()
         }
@@ -2365,6 +2395,36 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
 
     /// Creates a folder or renames a file/folder from a spoken request.
     /// Renames are confirmed first; nothing is ever deleted, moved or overwritten.
+    #if BIBBLES_DEVELOPER
+    /// The Files agent: preview first, nothing changes before Start; Done · Undo
+    /// for 30 minutes (also from task history and the menu).
+    private func startFilesAgent(_ transcript: String, layer: String) {
+        pendingVisualQuestion = nil
+        beginTaskConversationIfNeeded(for: transcript)
+        let speak = shouldSpeakNextAnswer && voiceRepliesEnabled
+        shouldSpeakNextAnswer = false
+        voiceReply.stop()
+        dismissTask?.cancel()
+        overlay.hide()
+        let session = FilesAgentSession(text: transcript, layer: layer)
+        let label = session.strings.label
+        session.onFinished = { [weak self] summary in
+            guard let self else { return }
+            self.chatStore.recordExchange(userText: transcript, assistantText: summary)
+            self.interaction.modelLabel = label
+            if speak { self.voiceReply.speak(summary) }
+        }
+        agentPanel.show(session)
+        session.start()
+    }
+
+    @objc private func undoLastAgentTask() {
+        guard let session = AgentUndoRegistry.shared.latest else { return }
+        agentPanel.show(session)
+        session.undo()
+    }
+    #endif
+
     private func performFileAction(_ transcript: String, lead: String? = nil, allowedTools: Set<String>? = nil) {
         shouldSpeakNextAnswer = false
         voiceReply.stop()

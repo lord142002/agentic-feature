@@ -14,6 +14,10 @@ enum HybridRoute: String, CaseIterable, Codable {
     case translate, screen, search, deep, command
     case formFill = "form_fill"
     case fileAction = "file_action"
+    #if BIBBLES_DEVELOPER
+    /// The Files agent (developer builds, only with "AI Agents (Files)" on).
+    case agentFiles = "agent_files"
+    #endif
     case unclear
 }
 
@@ -319,6 +323,10 @@ enum HybridRouter {
     static func accept(_ result: RouterResult?) -> HybridRoute? {
         guard let result, result.route != .unclear, result.confidence.isFinite,
               (acceptThreshold...1).contains(result.confidence) else { return nil }
+        #if BIBBLES_DEVELOPER
+        // The Files agent route exists only while its developer toggle is on.
+        if result.route == .agentFiles, !AgentSettings.filesEnabled { return nil }
+        #endif
         return result.route
     }
 
