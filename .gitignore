@@ -1,0 +1,38 @@
+# Swift and local build output
+.build/
+DerivedData/
+
+# macOS metadata and editor files
+.DS_Store
+.AppleDouble
+.LSOverride
+*.swp
+*.swo
+
+# Local diagnostics and test output
+*.ips
+*.log
+/tmp/
+
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.key
+*.secret
+credentials.json
+secrets.json
+
+# Local app bundles produced by development scripts
+*.app/
+Resources/Bibbles.iconset/
+
+# Local notes and exports (not part of the app)
+Claude outputs/
+
+# Billing Worker local files (secrets go in `wrangler secret put`, never in git)
+billing-worker/node_modules/
+billing-worker/.wrangler/
+billing-worker/.dev.vars

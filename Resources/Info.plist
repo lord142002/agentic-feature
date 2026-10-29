@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>Bibbles</string>
+    <key>CFBundleIconFile</key><string>Bibbles.icns</string>
+    <key>CFBundleIdentifier</key><string>com.bibbles.desktop.dev</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>Bibbles</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>13.0</string>
+    <key>LSUIElement</key><true/>
+    <key>BibblesSupabaseURL</key><string>https://eoaybgiwtjshmfdoqxqx.supabase.co</string>
+    <key>BibblesSupabasePublishableKey</key><string>sb_publishable_daO3QzOQITgAc-zSkmsGzg_68ZrF8ta</string>
+    <key>BibblesAppleSignInEnabled</key><false/>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>com.bibbles.desktop.auth</string>
+            <key>CFBundleURLSchemes</key><array><string>bibbles-auth</string></array>
+        </dict>
+    </array>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Bibbles uses the microphone only while you hold the push-to-talk or dictation shortcut.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Bibbles creates and renames folders on your Desktop when you ask it to.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Bibbles creates and renames folders in Documents when you ask it to.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>Bibbles creates and renames folders in Downloads when you ask it to.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Bibbles adds reminders when you ask it to.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Bibbles adds reminders when you ask it to.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Bibbles adds calendar events when you ask it to.</string>
+    <key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+    <string>Bibbles adds calendar events when you ask it to.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Bibbles controls Spotify and Music playback and switches dark mode through System Events only when you ask it to.</string>
+    <key>NSAppleMusicUsageDescription</key>
+    <string>Bibbles searches and plays Apple Music when you ask for a song or genre.</string>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Bibbles captures a selected screen region only when you ask about visible content.</string>
+</dict>
+</plist>
