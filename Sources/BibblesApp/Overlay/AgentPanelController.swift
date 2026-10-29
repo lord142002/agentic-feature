@@ -355,6 +355,11 @@ private struct ScreenAgentCardView: View {
                 }
                 .frame(maxHeight: 170)
             }
+            if !session.preview.notes.isEmpty {
+                Text(session.preview.notes.map { "Note: \($0)" }.joined(separator: "\n"))
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !session.preview.dropped.isEmpty {
                 Text(session.preview.dropped.map { "Skipped: \($0.reason)" }.joined(separator: "\n"))
                     .font(.system(size: 11)).foregroundStyle(Color.orange.opacity(0.85))

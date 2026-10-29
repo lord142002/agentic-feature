@@ -786,7 +786,7 @@ enum ScreenAX {
         let deadline = Date().addingTimeInterval(1.2)
         return ScreenSnapshot(appName: app.localizedName ?? "this app",
                               menus: menus(of: appElement, deadline: deadline),
-                              controls: controls(of: app, deadline: deadline).map(\.control),
+                              controls: controls(of: app, deadline: Date().addingTimeInterval(2.5)).map(\.control),
                               fields: FormFieldScanner().fields(in: app, limit: 40))
     }
 
@@ -815,16 +815,23 @@ enum ScreenAX {
     }
 
     /// Buttons, checkboxes, tabs, pop-ups and links in the front window and its sheets.
-    static func controls(of app: NSRunningApplication, deadline: Date) -> [(control: ScreenControl, element: AXUIElement)] {
+    /// Text boxes, found by label when a click names one ("Message body").
+    nonisolated static let textRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
+
+    /// Big web pages (Gmail) have deep trees: read them further than ordinary windows.
+    static func controls(of app: NSRunningApplication, deadline: Date, roles: Set<String> = controlRoles,
+                         limit: Int = 200, budget startBudget: Int = 15_000,
+                         maxDepth: Int = 60) -> [(control: ScreenControl, element: AXUIElement)] {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         guard let window = element(appElement, kAXFocusedWindowAttribute) else { return [] }
         var found: [(control: ScreenControl, element: AXUIElement)] = []
-        var budget = 3_000
+        var budget = startBudget
         func visit(_ node: AXUIElement, depth: Int) {
-            guard budget > 0, depth < 30, found.count < 150, Date() < deadline else { return }
+            guard budget > 0, depth < maxDepth, found.count < limit, Date() < deadline else { return }
             budget -= 1
             let role = string(node, kAXRoleAttribute) ?? ""
-            if controlRoles.contains(role) {
+            if roles.contains(role) {
                 let name = title(node)
                 if !name.isEmpty, (value(node, kAXEnabledAttribute) as? Bool) ?? true {
                     let isOn = role == "AXCheckBox" || role == "AXRadioButton" ? (value(node, kAXValueAttribute) as? NSNumber).map { $0.intValue == 1 } : nil
@@ -846,7 +853,7 @@ enum ScreenAX {
         let key = normalized(wanted)
         let end = Date().addingTimeInterval(timeout)
         repeat {
-            let all = controls(of: app, deadline: Date().addingTimeInterval(0.8)).filter { roles.contains($0.control.role) }
+            let all = controls(of: app, deadline: Date().addingTimeInterval(2), roles: roles)
             if let exact = all.first(where: { normalized($0.control.title) == key }) { return exact }
             if let partial = all.first(where: { normalized($0.control.title).contains(key) }) { return partial }
             try? await Task.sleep(nanoseconds: 300_000_000)
@@ -959,6 +966,31 @@ enum ScreenAX {
         mouse(at: point, down: false)
     }
 
+    /// The middle of an element on screen (top-left origin), from Accessibility.
+    static func center(of element: AXUIElement) -> CGPoint? {
+        guard let rawPosition = value(element, kAXPositionAttribute), let rawSize = value(element, kAXSizeAttribute),
+              CFGetTypeID(rawPosition) == AXValueGetTypeID(), CFGetTypeID(rawSize) == AXValueGetTypeID() else { return nil }
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(unsafeBitCast(rawPosition, to: AXValue.self), .cgPoint, &position)
+        AXValueGetValue(unsafeBitCast(rawSize, to: AXValue.self), .cgSize, &size)
+        guard size.width > 1, size.height > 1 else { return nil }
+        return CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2)
+    }
+
+    /// The element with the keyboard focus when it takes text (a field, a
+    /// text area, or an editable part of a web page such as Gmail's reply box).
+    static func focusedEditable(in app: NSRunningApplication) -> AXUIElement? {
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        guard let focused = element(appElement, kAXFocusedUIElementAttribute) else { return nil }
+        if textRoles.contains(string(focused, kAXRoleAttribute) ?? "") { return focused }
+        var names: CFArray?
+        guard AXUIElementCopyAttributeNames(focused, &names) == .success, let list = names as? [String] else { return nil }
+        let editable = list.contains("AXEditableAncestor") || list.contains(kAXSelectedTextRangeAttribute as String)
+            || list.contains("AXSelectedTextMarkerRange")
+        return editable ? focused : nil
+    }
+
     /// The title of the button or link under a screen point (to catch a "Buy" the plan called something else).
     static func titleAt(_ point: CGPoint) -> String? {
         var hit: AXUIElement?
@@ -1014,6 +1046,8 @@ struct ScreenPreview {
     var actions: [ScreenAction] = []
     var lines: [Line] = []
     var dropped: [AgentDroppedStep] = []
+    /// Things changed but not skipped ("left out your full name").
+    var notes: [String] = []
     var isEmpty: Bool { actions.isEmpty }
     var fills: Int { actions.filter { if case .fill = $0 { return true } else { return false } }.count }
 
@@ -1039,7 +1073,13 @@ enum ScreenPlanValidator {
         var opensDialog = false
         let requestFolded = ToolGateText.fold(request)
         func drop(_ index: Int, _ reason: String) { preview.dropped.append(AgentDroppedStep(index: index, reason: reason)) }
+        var currentIndex = 0
         func add(_ action: ScreenAction, _ text: String, asksFirst: Bool = false) {
+            // A final action (Send…) never follows a skipped step: it could send an empty or wrong message.
+            if asksFirst, !preview.dropped.isEmpty {
+                preview.dropped.append(AgentDroppedStep(index: currentIndex, reason: "“\(text)” not done because an earlier step was skipped"))
+                return
+            }
             preview.lines.append(.init(id: preview.lines.count, text: asksFirst ? text + " (asks you first)" : text,
                                        undoable: action.isUndoable, asksFirst: asksFirst))
             preview.actions.append(action)
@@ -1058,6 +1098,7 @@ enum ScreenPlanValidator {
         }
 
         for (index, step) in plan.steps.enumerated() {
+            currentIndex = index
             switch step {
             case .menu(let path):
                 if let reason = blockedReason(path.last ?? "") { drop(index, reason); continue }
@@ -1146,10 +1187,13 @@ enum ScreenPlanValidator {
                 let asks = markedFinal || isFinal(label)
                 add(.click(target, label: label, final: asks), "Click \(name)", asksFirst: asks)
             case .type(let text):
-                switch resolve(text, details: details, request: requestFolded, allowNewText: true) {
-                case .failure(let problem): drop(index, problem.reason)
-                case .success(let typed): add(.type(typed), "Type “\(typed.count > 120 ? String(typed.prefix(120)) + "…" : typed)”")
+                // A missing detail leaves out only that part, not the whole message.
+                let (typed, missing) = typing(text, details: details)
+                guard !typed.isEmpty else { drop(index, "nothing left to type"); continue }
+                for key in missing {
+                    preview.notes.append("Left out your \(key.lowercased()): it isn't in Settings → Developer → My details")
                 }
+                add(.type(typed), "Type “\(typed.count > 120 ? String(typed.prefix(120)) + "…" : typed)”")
             case .key(let keys, let markedFinal):
                 let risky = markedFinal || (snapshot.appName == "Messages" && ScreenKeys.parse(keys)?.code == 36)
                 add(.key(keys, final: risky), "Press \(keys)", asksFirst: risky)
@@ -1212,6 +1256,29 @@ enum ScreenPlanValidator {
         return result.isEmpty ? .failure(.init(reason: "nothing to type")) : .success(result)
     }
 
+    /// Typed text: placeholders become saved details; a missing or unknown one
+    /// is left out (with its separator), and its name is returned for a note.
+    static func typing(_ value: String, details: MyDetails) -> (text: String, missing: [String]) {
+        guard let pattern = try? NSRegularExpression(pattern: #"[ \t]*,?[ \t]*\{\{\s*([a-zA-Z]+)\s*\}\}"#) else { return (value, []) }
+        var text = value
+        var missing: [String] = []
+        for match in pattern.matches(in: value, range: NSRange(value.startIndex..., in: value)).reversed() {
+            guard let whole = Range(match.range, in: text), let nameRange = Range(match.range(at: 1), in: value) else { continue }
+            let name = String(value[nameRange])
+            if let key = MyDetails.Key(rawValue: name), !details.value(key).isEmpty {
+                // Keep what came before the placeholder (", " or " "), then the value.
+                let lead = String(text[whole].prefix { $0 != "{" })
+                text.replaceSubrange(whole, with: lead + details.value(key))
+            } else {
+                missing.append(MyDetails.Key(rawValue: name)?.title ?? name)
+                text.replaceSubrange(whole, with: "")
+            }
+        }
+        let cleaned = text.components(separatedBy: "\n").map { $0.replacingOccurrences(of: #"[ \t]+$"#, with: "", options: .regularExpression) }
+            .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return (cleaned, missing.reversed())
+    }
+
     /// "Fill … with my details": a plan made entirely on the Mac (no AI).
     /// Only empty fields whose label is a known detail; never-fill fields are skipped.
     @MainActor
@@ -1242,7 +1309,8 @@ enum ScreenAgentPrompt {
         - toggle {"target":"Remember me","on":false}; choose {"target":"Country","option":"India"}.
         - save {"folder":"Desktop","name":"holi final"}: in an open save/export sheet; folder and name only when the user said them.
         - click {"x":512,"y":300,"label":"Search box"}: a point on the SCREENSHOT, x and y from 0 to 1000 (top-left is 0,0). Use it for things the description doesn't list (web pages, canvases). Aim at the centre of the target.
-        - type {"text":"Hello Sam, …"}: types text where the cursor is (click the field first). You may write new text (an email, a message, a search) when the user asked for it.
+        - type {"text":"Hello Sam, …"}: types text where the cursor is (click the field first, with a label naming it, e.g. "Message body"). You may write new text (an email, a message, a search) when the user asked for it. Don't sign it with the user's name unless they asked.
+        Always give click steps a "label" with the button's or field's visible name ("Reply", "Send", "Message body"): Bibbles presses it by that name when it can, which is exact.
         - key {"keys":"return"}: one key or shortcut: return, tab, escape, space, delete, arrows, pageup, pagedown, letters, digits, with cmd/shift/option/ctrl (e.g. "cmd+l").
         - play {"notes":[{"x":120,"y":820,"ms":350},{"key":"a","ms":350},{"keys":["a","j"],"ms":250},{"points":[{"x":300,"y":700},{"x":340,"y":700}],"ms":400},{"key":"d","ms":500,"hold":900},{"x":400,"y":300,"to":{"x":400,"y":620},"ms":500,"hold":180}]}: music on a piano, drums, guitar or any instrument on screen. "ms" is the time until the next note starts (0 = together with the next); "keys"/"points" are pressed together (chords, kick + hi-hat); "hold" keeps it down longer (ms, may overlap later notes); "to" drags while held (a guitar strum across the strings). Up to 400 notes. Compose an original piece that fits the request (theme, mood, style), 16-64 notes or beats, using only keys or pads you can see. Prefer keyboard keys when the page shows a key for each note (they are exact); clicks "together" land a few ms apart.
         - wait {"ms":1500}: wait for a page or window to load.
@@ -1293,6 +1361,8 @@ final class ScreenExecutor {
     private let inserter: FocusedTextInserter
     /// The folder of the document on screen (a likely save location).
     private var documentFolder: URL?
+    /// Where text was last typed (refocused after a confirmation question).
+    private var lastTextElement: AXUIElement?
 
     /// Asks before a final action (Send, Buy, Delete…); tests replace it.
     var confirm: @MainActor (String, NSRunningApplication) -> Bool = { action, app in ScreenConfirm.ask(action, in: app) }
@@ -1396,7 +1466,25 @@ final class ScreenExecutor {
             result.previousValues.append((field, field.value))
             result.filled += 1
         case .click(let point, let label, let isFinalStep):
-            // Whatever is really under the point decides, not only the plan's label.
+            // By name first: a real "Reply" button or "Message body" box is exact.
+            if !label.isEmpty,
+               let found = await ScreenAX.findControl(label, roles: ScreenAX.controlRoles.union(ScreenAX.textRoles), in: app, timeout: 1.5) {
+                let name = found.control.title
+                if ScreenSafety.neverWord(in: name) != nil { return "“\(name)” is never pressed by Bibbles" }
+                if isFinalStep || ScreenSafety.blockedWord(in: name) != nil {
+                    guard confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
+                }
+                if ScreenAX.textRoles.contains(found.control.role) {
+                    AXUIElementSetAttributeValue(found.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    if let middle = ScreenAX.center(of: found.element) { ScreenAX.click(at: middle) }
+                } else if !ScreenAX.press(found.element) {
+                    guard let middle = ScreenAX.center(of: found.element) else { return "couldn't press “\(name)”" }
+                    ScreenAX.click(at: middle)
+                }
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                return nil
+            }
+            // Otherwise the point on the screenshot. Whatever is really under it decides, not only the plan's label.
             let underneath = ScreenAX.titleAt(point) ?? ""
             if ScreenSafety.neverWord(in: underneath) != nil || ScreenSafety.neverWord(in: label) != nil {
                 return "“\(underneath.isEmpty ? label : underneath)” is never pressed by Bibbles"
@@ -1408,11 +1496,27 @@ final class ScreenExecutor {
             ScreenAX.click(at: point)
             try? await Task.sleep(nanoseconds: 450_000_000)
         case .type(let text):
+            // Only into a text box: never type into nothing (a box that didn't open).
+            var target: AXUIElement?
+            for _ in 0..<5 {
+                target = ScreenAX.focusedEditable(in: app)
+                if target != nil { break }
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+            guard let target else { return "the cursor isn't in a text box, so nothing was typed (the box may not have opened)" }
+            lastTextElement = target
             do { try inserter.paste(text, restoringClipboard: true) } catch { return "couldn't type the text" }
             try? await Task.sleep(nanoseconds: 450_000_000)
         case .key(let keys, let isFinalStep):
             guard let parsed = ScreenKeys.parse(keys) else { return "Bibbles doesn't press \(keys)" }
-            if isFinalStep { guard confirm("Press \(keys)", app) else { return "you stopped before \(keys)" } }
+            if isFinalStep {
+                guard confirm("Press \(keys)", app) else { return "you stopped before \(keys)" }
+                // The question took the focus: put the cursor back where the text was typed.
+                if let lastTextElement {
+                    AXUIElementSetAttributeValue(lastTextElement, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                }
+            }
             ScreenAX.postKey(parsed.code, flags: parsed.flags)
             try? await Task.sleep(nanoseconds: 250_000_000)
         case .play(let notes):

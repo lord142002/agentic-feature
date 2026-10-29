@@ -218,6 +218,46 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertEqual(AgentPlanner.emptyReplyProblem(Data("{}".utf8), provider: "OpenRouter"), .invalidResponse("OpenRouter"))
     }
 
+    // MARK: Gmail reply fixes
+
+    func testAMissingDetailLeavesOutOnlyThatPart() {
+        var noName = me
+        noName.firstName = ""
+        noName.lastName = ""
+        let (text, missing) = ScreenPlanValidator.typing("Please block my account.\n\nThanks,\n{{fullName}}", details: noName)
+        XCTAssertEqual(text, "Please block my account.\n\nThanks,")
+        XCTAssertEqual(missing, ["Full name"])
+        XCTAssertEqual(ScreenPlanValidator.typing("Hi, I'm {{firstName}}, email {{email}}", details: me).text,
+                       "Hi, I'm Mohit, email mohit@example.com")
+        XCTAssertEqual(ScreenPlanValidator.typing("My password is {{password}}", details: me).text, "My password is",
+                       "unknown placeholders are never filled")
+    }
+
+    @MainActor
+    func testSendIsDroppedWhenAnEarlierStepWasSkipped() {
+        var screen = snapshot()
+        screen.screenFrame = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+        let plan = ScreenPlan(summary: "", steps: [.click(x: 0.3, y: 0.9, label: "Reply", final: false),
+                                                   .fill(field: "Nickname", value: "Mo"),          // no such field: skipped
+                                                   .click(x: 0.4, y: 0.9, label: "Send", final: true)])
+        let preview = ScreenPlanValidator.preview(plan, snapshot: screen, request: "reply and send", details: me)
+        XCTAssertEqual(preview.lines.map(\.text), ["Click “Reply”"])
+        XCTAssertEqual(preview.dropped.map(\.index), [1, 2])
+        XCTAssertTrue(preview.dropped[1].reason.contains("an earlier step was skipped"))
+
+        let typed = ScreenPlan(summary: "", steps: [.click(x: 0.3, y: 0.9, label: "Reply", final: false),
+                                                    .type("Please block my account. {{fullName}}"),
+                                                    .click(x: 0.4, y: 0.9, label: "Send", final: true)])
+        var noName = me
+        noName.firstName = ""
+        noName.lastName = ""
+        let kept = ScreenPlanValidator.preview(typed, snapshot: screen, request: "reply and send", details: noName)
+        XCTAssertEqual(kept.lines.map(\.text), ["Click “Reply”", "Type “Please block my account.”", "Click “Send” (asks you first)"],
+                       "a left-out name is a note, not a skipped step, so Send stays (and still asks first)")
+        XCTAssertEqual(kept.notes.count, 1)
+        XCTAssertTrue(kept.dropped.isEmpty)
+    }
+
     func testKeysAndShortcuts() {
         XCTAssertEqual(ScreenKeys.parse("return")?.code, 36)
         XCTAssertEqual(ScreenKeys.parse("cmd+L")?.flags, .maskCommand)
