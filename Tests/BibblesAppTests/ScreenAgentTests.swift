@@ -180,6 +180,14 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertTrue(ScreenAgentDetector.mightBeAction("Click Export and save it as a PDF"))
         XCTAssertTrue(ScreenAgentDetector.mightBeAction("Go to Settings and turn on dark mode"))
         XCTAssertFalse(ScreenAgentDetector.mightBeAction("what is this chart"))
+        for command in ["export this holi7 image file to pdf", "Please export it as a PDF", "Click Save", "can you turn off dark mode",
+                        "Exportiere das als PDF", "Exporta esto a PDF", "isko pdf mein export kar do"] {
+            XCTAssertTrue(ScreenAgentDetector.isDirectCommand(command), command)
+        }
+        for question in ["how do I export this as a PDF?", "how do I export this", "where is the Export button",
+                         "what does export do", "Clean up my Downloads folder"] {
+            XCTAssertFalse(ScreenAgentDetector.isDirectCommand(question), question)
+        }
     }
 
     func testRoutingOnlyWhileTheToggleIsOn() {

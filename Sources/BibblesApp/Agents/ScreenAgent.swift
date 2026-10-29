@@ -151,6 +151,38 @@ enum ScreenAgentDetector {
         contains(fillVerbs, in: text) && contains(detailWords, in: text)
     }
 
+    /// Commands that start with doing something on screen.
+    static let commandStarts = ["export", "click", "press", "tap", "save this as", "save it as", "save as", "turn on", "turn off",
+                                "switch on", "switch off", "enable", "disable", "untick", "uncheck", "tick", "check the box",
+                                "exportier", "klick", "drück", "speichere", "schalte", "exporta", "haz clic", "pulsa", "guarda",
+                                "activa", "desactiva", "exporte", "clique", "enregistre", "active", "désactive", "clica", "salva",
+                                "ativa", "desativa", "export kar", "click kar", "pdf bana", "pdf mein export"]
+    static let politeOpenings = ["please", "can you", "could you", "would you", "bibbles", "hey bibbles", "ok", "okay", "now",
+                                 "bitte", "por favor", "puedes", "s il te plait", "pode", "zara", "jara", "plz"]
+    static let questionStarts = ["how", "where", "what", "why", "which", "wie", "wo", "was", "como", "cómo", "donde", "dónde",
+                                 "comment", "où", "kaise", "kahan", "kya"]
+
+    /// A plain command such as "Export this to PDF" or "Click Save": no router needed.
+    static func isDirectCommand(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasSuffix("?") else { return false }
+        var folded = ToolGateText.fold(trimmed)
+        var stripped = true
+        while stripped {
+            stripped = false
+            for opening in politeOpenings where folded.hasPrefix(ToolGateText.fold(opening) + " ") {
+                folded = String(folded.dropFirst(ToolGateText.fold(opening).count + 1))
+                stripped = true
+            }
+        }
+        if questionStarts.contains(where: { folded.hasPrefix(ToolGateText.fold($0) + " ") }) { return false }
+        // Hindi, Hinglish and Japanese put the verb last.
+        let verbLast = ["export kar", "pdf bana", "pdf mein export", "click kar", "on kar do", "off kar do", "save kar"]
+        return commandStarts.contains { folded.hasPrefix(ToolGateText.fold($0)) }
+            || verbLast.contains { folded.contains($0) }
+            || ["क्लिक कर", "पीडीएफ", "エクスポート", "書き出して", "クリックして"].contains(where: trimmed.contains)
+    }
+
     /// Might ask Bibbles to act on screen: the AI router decides.
     static func mightBeAction(_ text: String) -> Bool {
         isDetailsFill(text) || contains(actionWords, in: text)

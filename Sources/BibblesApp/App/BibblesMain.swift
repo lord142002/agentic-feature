@@ -926,9 +926,10 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             return
         }
         // "AI Agents (Screen)" on: "fill … with my details" is planned on the Mac (no AI).
-        if intent != .dictate, AgentSettings.screenEnabled, ScreenAgentDetector.isDetailsFill(transcript) {
+        if intent != .dictate, AgentSettings.screenEnabled,
+           ScreenAgentDetector.isDetailsFill(transcript) || ScreenAgentDetector.isDirectCommand(transcript) {
             ToolGateLog.shared.recordRouting(
-                RoutingDecision(source: .keyword, override: nil, keywordStrength: .strong, reason: "screen agent details fill"),
+                RoutingDecision(source: .keyword, override: nil, keywordStrength: .strong, reason: "screen agent command"),
                 text: transcript, finalRoute: "agent_screen", tier: "agent")
             startScreenAgent(transcript, layer: "keyword")
             return
