@@ -86,7 +86,8 @@ enum ModelCatalog {
         case .router: return [haiku45]
         case .agentPlanner: return [gpt5Mini, haiku55, gemini38Flash, haiku45, sonnet55]
         case .agentBackup: return [haiku45, haiku55]
-        case .screenAgent: return [gemini38Flash, gpt5Mini, haiku55, sonnet55]
+        // GPT-5 mini: cheapest reliable screen planner in testing (2026-10-29).
+        case .screenAgent: return [gpt5Mini, gemini38Flash, haiku55, sonnet55]
         }
     }
 

@@ -13,9 +13,9 @@ Prices are US dollars per million tokens (input / output) unless noted.
 | Light chat, search, light vision | DeepSeek V4.1 Flash | `deepseek/deepseek-v4.1-flash` | OpenRouter | $0.045 / $0.50 |
 | Light backup, router, agent backup (default) | Claude Haiku 4.5 | `claude-haiku-4-5-20251001` | Anthropic | $1.00 / $5.00 |
 | Deep chat, deep vision | Claude Sonnet 5.5 | `claude-sonnet-5-5` | Anthropic | $2.00 / $10.00 |
-| Agent planner (default) | GPT-5 mini | `openai/gpt-5-mini` | OpenRouter | $0.25 / $2.00 |
+| Agent planner and screen agent (default) | GPT-5 mini | `openai/gpt-5-mini` | OpenRouter | $0.25 / $2.00 |
 | Agent planner / backup option | Claude Haiku 5.5 | `claude-haiku-5-5` | Anthropic | $0.10 / $0.50 (prompts up to 100K tokens) |
-| Agent planner option, screen agent (default) | Gemini 3.8 Flash | `google/gemini-3.8-flash` | OpenRouter | $0.825 / $4.125 |
+| Agent planner and screen agent option | Gemini 3.8 Flash | `google/gemini-3.8-flash` | OpenRouter | $0.825 / $4.125 |
 | Speech to text | Nemotron 3.5 ASR (multilingual) | `nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b` | OpenRouter | $0.00000333 per unit (listed `prompt` price) |
 | Speech to text backup | Deepgram Nova-3 | `nova-3` | Deepgram | Deepgram's own pricing |
 | Spoken answers | Gemini 3.8 Flash Lite TTS | `google/gemini-3.8-flash-lite-tts` | OpenRouter | $0.50 / $6.00 |

@@ -16,7 +16,7 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(ModelCatalog.selected(.router, defaults: defaults).id, "claude-haiku-4-5-20251001")
         XCTAssertEqual(ModelCatalog.selected(.agentPlanner, defaults: defaults).id, "openai/gpt-5-mini")
         XCTAssertEqual(ModelCatalog.selected(.agentBackup, defaults: defaults).id, "claude-haiku-4-5-20251001")
-        XCTAssertEqual(ModelCatalog.selected(.screenAgent, defaults: defaults).id, "google/gemini-3.8-flash")
+        XCTAssertEqual(ModelCatalog.selected(.screenAgent, defaults: defaults).id, "openai/gpt-5-mini")
         XCTAssertEqual(ModelCatalog.choices(for: .agentPlanner).map(\.name),
                        ["GPT-5 mini", "Haiku 5.5", "Gemini 3.8 Flash", "Haiku 4.5", "Sonnet 5.5"])
         XCTAssertEqual(ModelCatalog.choices(for: .agentBackup).map(\.name), ["Haiku 4.5", "Haiku 5.5"])
