@@ -369,6 +369,26 @@ final class FilesAgentTests: XCTestCase {
         XCTAssertEqual(HybridRouter.accept(RouterResult(route: .agentFiles, confidence: 0.99)), .agentFiles)
     }
 
+    func testFileRequestsGoToTheAIRouterWhileTheAgentIsOn() async {
+        let text = "rename all the screenshot image file on my desktop to trip 1 trip 2 trip 3"
+        AgentSettings.testOverride = false
+        if case .unclear = HybridRouter.keywordVerdict(for: text, flags: RouterFlags()) {
+            XCTFail("agent off: keywords decide, as today")
+        }
+        AgentSettings.testOverride = true
+        XCTAssertEqual(HybridRouter.keywordVerdict(for: text, flags: RouterFlags()), .unclear("files: router decides"))
+        // The router's answer is used.
+        struct Agent: RouterTransport {
+            func send(_ request: URLRequest) async throws -> (Data, Int) {
+                (Data(#"{"content":[{"type":"text","text":"agent_files\",\"confidence\":0.93}"}]}"#.utf8), 200)
+            }
+        }
+        let decision = await HybridRouter.decide(text: text, flags: RouterFlags(),
+                                                 client: RouterClient(serverToken: "t", transport: Agent()), timeout: 1)
+        XCTAssertEqual(decision.source, .router)
+        XCTAssertEqual(decision.override, .agentFiles)
+    }
+
     func testSummariesAreLocalized() {
         var result = AgentResult()
         result.moved = 362

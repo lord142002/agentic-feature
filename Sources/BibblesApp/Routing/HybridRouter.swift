@@ -150,6 +150,14 @@ enum HybridRouter {
         let words = improvements ? RoutingText.wordCount(text) : text.split(whereSeparator: { $0.isWhitespace }).count
         let clauses = improvements ? clauseRoutes(for: text, flags: flags, intentRouter: intentRouter) : []
         let today = baselineRoute(for: text, flags: flags, intentRouter: intentRouter)
+        #if BIBBLES_DEVELOPER
+        // With the Files agent on, file and Mac-action requests are not decided
+        // by keywords: the AI router picks file_action (one file), agent_files
+        // (many files) or command.
+        if AgentSettings.filesEnabled, [.fileAction, .command].contains(today) || intentRouter.isFileRequest(text) {
+            return .unclear("files: router decides")
+        }
+        #endif
 
         switch decision.strength {
         case .strong:
