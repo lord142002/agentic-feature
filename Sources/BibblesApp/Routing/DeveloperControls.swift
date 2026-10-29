@@ -1,10 +1,12 @@
+#if BIBBLES_DEVELOPER
 import AppKit
 import Foundation
 
 /// The developer test controls shared by the Option-click Developer menu and
 /// Settings → Developer, so both always show the same state. Nothing here
 /// changes the available tool set. The Tool Gate and AI router are on by
-/// default; experimental keyword improvements are off.
+/// default; experimental keyword improvements are off. Developer builds only
+/// (`-Xswiftc -DBIBBLES_DEVELOPER`): none of this exists in customer builds.
 @MainActor
 final class DeveloperControls: ObservableObject {
     static let shared = DeveloperControls()
@@ -22,16 +24,6 @@ final class DeveloperControls: ObservableObject {
     @Published private(set) var messageIsError = false
     /// Extra progress output for the run in progress (the menu's notes).
     private var progressNote: ((String) -> Void)?
-
-    /// Settings → Developer is shown in developer builds (bundle id ending in
-    /// ".dev"), with BIBBLES_DEVELOPER=1, or after `defaults write <bundle id>
-    /// bibbles.showDeveloperSettings -bool YES`.
-    static var isAvailable: Bool {
-        if UserDefaults.standard.object(forKey: "bibbles.showDeveloperSettings") as? Bool == false { return false }
-        if UserDefaults.standard.bool(forKey: "bibbles.showDeveloperSettings") { return true }
-        if ProcessInfo.processInfo.environment["BIBBLES_DEVELOPER"] == "1" { return true }
-        return Bundle.main.bundleIdentifier?.hasSuffix(".dev") == true
-    }
 
     private init() {}
 
@@ -159,3 +151,4 @@ final class DeveloperControls: ObservableObject {
         messageIsError = error
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if BIBBLES_DEVELOPER
 import Foundation
 
 /// Developer test set for the AI router (see docs/ROUTER_TEST_SET.md, generated
@@ -174,3 +175,4 @@ enum RouterTestSet {
         RouterTestCase(language: "English", flags: flags(""), expected: .search, text: "how much is a return ticket from Mumbai to Goa this Friday"),
     ]
 }
+#endif

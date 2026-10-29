@@ -1,8 +1,19 @@
 #!/bin/sh
+# Customer app by default; DEVELOPER=1 builds the developer app (BIBBLES_DEVELOPER flag, .build-dev folder, ".dev" bundle id).
 set -eu
 
 PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-BUILD_ROOT="$PROJECT_DIR/.build/dev-app"
+if [ "${DEVELOPER:-0}" = "1" ]; then
+  # Developer code is compiled in only with this flag, in its own build folder
+  # so customer and developer builds never mix.
+  SCRATCH_PATH="$PROJECT_DIR/.build-dev"
+  SWIFT_FLAGS="-Xswiftc -DBIBBLES_DEVELOPER"
+else
+  # SwiftPM's default build folder: the customer build is unchanged.
+  SCRATCH_PATH="$PROJECT_DIR/.build"
+  SWIFT_FLAGS=""
+fi
+BUILD_ROOT="$SCRATCH_PATH/dev-app"
 APP_PATH="$BUILD_ROOT/Bibbles.app"
 CONTENTS="$APP_PATH/Contents"
 MACOS="$CONTENTS/MacOS"
@@ -16,6 +27,10 @@ import os, plistlib, sys
 path = sys.argv[1]
 with open(path, 'rb') as source:
     info = plistlib.load(source)
+if os.environ.get('DEVELOPER', '0') == '1':
+    # Its own bundle id: separate macOS permissions and Keychain items.
+    info['CFBundleIdentifier'] = info['CFBundleIdentifier'] + '.dev'
+    info['CFBundleName'] = 'Bibbles Dev'
 for environment, key in [('BIBBLES_POSTHOG_PROJECT_TOKEN', 'BibblesPostHogProjectToken'),
                          ('BIBBLES_POSTHOG_HOST', 'BibblesPostHogHost')]:
     value = os.environ.get(environment, '').strip()
@@ -39,11 +54,11 @@ export SWIFTPM_MODULECACHE_OVERRIDE=${SWIFTPM_MODULECACHE_OVERRIDE:-/private/tmp
 
 build_arch() {
   if [ "$1" = "arm64" ]; then
-    swift build --configuration release --product Bibbles --jobs 4 --package-path "$PROJECT_DIR"
-    BIN_PATH=$(swift build --configuration release --show-bin-path --package-path "$PROJECT_DIR")
+    swift build --configuration release --product Bibbles --jobs 4 --package-path "$PROJECT_DIR" --scratch-path "$SCRATCH_PATH" $SWIFT_FLAGS
+    BIN_PATH=$(swift build --configuration release --show-bin-path --package-path "$PROJECT_DIR" --scratch-path "$SCRATCH_PATH" $SWIFT_FLAGS)
   else
-    swift build --configuration release --product Bibbles --jobs 4 --package-path "$PROJECT_DIR" --triple "$1-apple-macosx13.0"
-    BIN_PATH=$(swift build --configuration release --show-bin-path --package-path "$PROJECT_DIR" --triple "$1-apple-macosx13.0")
+    swift build --configuration release --product Bibbles --jobs 4 --package-path "$PROJECT_DIR" --triple "$1-apple-macosx13.0" --scratch-path "$SCRATCH_PATH" $SWIFT_FLAGS
+    BIN_PATH=$(swift build --configuration release --show-bin-path --package-path "$PROJECT_DIR" --triple "$1-apple-macosx13.0" --scratch-path "$SCRATCH_PATH" $SWIFT_FLAGS)
   fi
   cp "$BIN_PATH/Bibbles" "$2"
   # Native macOS uses these dependency bundles for privacy manifests only.

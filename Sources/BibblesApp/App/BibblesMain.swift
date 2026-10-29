@@ -590,9 +590,13 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         let minutesSaved = usageMetrics.weeklyMinutesSaved()
         let microphoneReady = permissions.microphone == .authorized
         let ready = accountReady && permissions.accessibility && microphoneReady
-        // Hold Option while opening the menu to show developer tools.
+        #if BIBBLES_DEVELOPER
+        // Developer builds: hold Option while opening the menu to show developer tools.
         let showDeveloperTools = NSEvent.modifierFlags.contains(.option)
             || ProcessInfo.processInfo.environment["BIBBLES_DEVELOPER"] == "1"
+        #else
+        let showDeveloperTools = false
+        #endif
 
         let header = NSMenuItem(title: ready ? "Bibbles is ready" : "Bibbles setup needed", action: nil, keyEquivalent: "")
         header.image = NSImage(systemSymbolName: ready ? "checkmark.circle.fill" : "exclamationmark.circle", accessibilityDescription: nil)
@@ -667,6 +671,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         addItem(to: help, "Permissions…", #selector(showPermissionStatus))
         menu.addItem(submenuItem("Help", help))
 
+        #if BIBBLES_DEVELOPER
         if showDeveloperTools {
             let developer = NSMenu(title: "Developer")
             addItem(to: developer, "Test local capture + OCR", #selector(testScreenCapture))
@@ -686,6 +691,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
                     #selector(runRouterTestSet))
             menu.addItem(submenuItem("Developer", developer))
         }
+        #endif
 
         menu.addItem(.separator())
         let saved = NSMenuItem(
@@ -818,7 +824,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             overlay.showNearCursor()
             if notchHistoryEnabled { notchPill.interactionDidBegin() }
             activeSpeechMode = .command
+            #if BIBBLES_DEVELOPER
             RouterWarmUp.ifNeeded()
+            #endif
             latency.end("shortcut_to_overlay")
             speechStartTask = Task { await speech.begin(mode: .command) }
         case .pushToTalkEnded:
@@ -870,7 +878,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
                 await speech.finish()
             }
         case .typedInputRequested:
+            #if BIBBLES_DEVELOPER
             RouterWarmUp.ifNeeded()
+            #endif
             voiceReply.stop()
             shouldSpeakNextAnswer = false
             openComposer()
@@ -1026,6 +1036,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         HybridRouter.route(for: intent, text: transcript, flags: RouterFlags(), intentRouter: intentRouter).rawValue
     }
 
+    #if BIBBLES_DEVELOPER
     @objc private func toggleKeywordImprovements() {
         DeveloperControls.shared.setKeywordImprovements(!HybridRouter.keywordImprovementsEnabled)
         var note = "Keyword improvements: \(HybridRouter.keywordImprovementsEnabled ? "On" : "Off")"
@@ -1073,6 +1084,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     @objc private func runRouterTestSet() {
         DeveloperControls.shared.runTestSet { [weak self] note in self?.showDeveloperNote(note) }
     }
+    #endif
 
     private func handle(_ intent: BibblesIntent, transcript: String) {
         pendingVisualQuestion = nil
@@ -2257,6 +2269,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
 
     // MARK: Tool Gate (developer menu)
 
+    #if BIBBLES_DEVELOPER
     @objc private func toggleToolGate() {
         DeveloperControls.shared.setToolGate(!ToolGate.isEnabled)
         showDeveloperNote("\(ToolGateStrings.menuGate): \(ToolGate.isEnabled ? "On" : "Off")")
@@ -2282,6 +2295,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         overlay.showNearCursor()
         scheduleDismissal()
     }
+    #endif
 
     @objc private func copyLastAnswer() {
         guard let answer = interaction.lastAnswer else { return }
@@ -3001,6 +3015,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         scheduleDismissal(afterNanoseconds: 4_000_000_000)
     }
 
+    #if BIBBLES_DEVELOPER
     @objc private func testScreenCapture() {
         if !PermissionService.requestScreenRecording() {
             interaction.transition(to: .failed(
@@ -3045,6 +3060,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         understandScreen(question: "Identify and explain the most relevant visible UI target near the cursor.")
     }
+    #endif
 
     @objc private func quit() {
         NSApp.terminate(nil)

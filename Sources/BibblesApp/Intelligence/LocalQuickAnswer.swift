@@ -46,7 +46,7 @@ enum LocalQuickAnswer {
         if Self.nameQuestions.contains(question) {
             return "I'm Bibbles — your quick-thinking Mac companion. Point, ask, and I'll make the screen make sense."
         }
-        if Self.isDeveloperQuestion(question) {
+        if Self.isCreatorQuestion(question) {
             return BibblesIdentity.spokenAttribution
         }
         if multilingual ?? ToolGate.isEnabled {
@@ -161,15 +161,15 @@ enum LocalQuickAnswer {
         "what s your name", "what is your name", "who are you", "tell me your name",
         "tumhara naam kya hai", "aapka naam kya hai", "who is bibbles"
     ]
-    private static func isDeveloperQuestion(_ question: String) -> Bool {
+    private static func isCreatorQuestion(_ question: String) -> Bool {
         var request = question
         for prefix in ["can you tell me ", "could you tell me ", "please tell me ", "tell me "] {
             if request.hasPrefix(prefix) { request.removeFirst(prefix.count); break }
         }
-        return developerQuestions.contains(request)
+        return creatorQuestions.contains(request)
     }
 
-    private static let developerQuestions: Set<String> = [
+    private static let creatorQuestions: Set<String> = [
         "who made you", "who built you", "who developed you", "who is your developer",
         "who s your developer", "who is your creator", "who created you", "who designed you",
         "who created bibbles", "who made bibbles", "who built bibbles", "who developed bibbles",

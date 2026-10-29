@@ -87,8 +87,11 @@ struct RoutingDecision: Equatable {
 enum HybridRouter {
     static let enabledKey = "bibbles.aiRouterEnabled"
     static let model = "claude-haiku-4-5-20251001"
+    #if BIBBLES_DEVELOPER
+    /// Developer builds only: Haiku called directly with the developer's key.
     static let messagesURL = URL(string: "https://api.anthropic.com/v1/messages")!
     static let modelsURL = URL(string: "https://api.anthropic.com/v1/models?limit=1")!
+    #endif
     /// The router's answer is used only at or above this confidence.
     static let acceptThreshold = 0.75
     /// Live requests wait at most this long for the router.
@@ -401,29 +404,52 @@ struct RouterOutcome: Equatable {
 }
 
 struct RouterClient {
-    let key: String
     var transport: RouterTransport = URLSessionRouterTransport()
     /// Set: the request goes to the Bibbles server's /v1/route with the
     /// user's sign-in token, and the server calls Haiku with its own key.
-    var serverToken: String? = nil
+    var serverToken: String?
+    #if BIBBLES_DEVELOPER
+    /// Developer builds only: the developer's own Anthropic key (empty when
+    /// the request goes to the server).
+    var key = ""
+    #endif
+
+    /// Customer builds always go through the Bibbles server.
+    init(serverToken: String, transport: RouterTransport = URLSessionRouterTransport()) {
+        self.serverToken = serverToken
+        self.transport = transport
+    }
+
+    #if BIBBLES_DEVELOPER
+    init(key: String, transport: RouterTransport = URLSessionRouterTransport()) {
+        self.key = key
+        self.serverToken = nil
+        self.transport = transport
+    }
+    #endif
 
     var viaServer: Bool { serverToken != nil }
 
     /// Self-test only: never call the server.
     static var serverAllowed = true
 
+    #if BIBBLES_DEVELOPER
     /// The developer's own key (testing, router test set); nil without one.
     static func developer() -> RouterClient? {
         guard let key = RouterKeychain.read(), !key.isEmpty else { return nil }
         return RouterClient(key: key)
     }
+    #endif
 
-    /// The developer key when one is saved, otherwise the Bibbles server
-    /// for any signed-in user. nil (not signed in) means "skip the router".
+    /// Developer builds: the developer key when one is saved. Otherwise the
+    /// Bibbles server for any signed-in user. nil (not signed in) means
+    /// "skip the router".
     static func live() async -> RouterClient? {
+        #if BIBBLES_DEVELOPER
         if let developer = developer() { return developer }
+        #endif
         guard serverAllowed, let token = try? await AccountSession.shared.workerAccessToken() else { return nil }
-        return RouterClient(key: "", serverToken: token)
+        return RouterClient(serverToken: token)
     }
 
     static func resolve(_ given: RouterClient?) async -> RouterClient? {
@@ -433,18 +459,20 @@ struct RouterClient {
 
     func urlRequest(text: String, flags: RouterFlags) throws -> URLRequest {
         let body = try JSONSerialization.data(withJSONObject: HybridRouter.requestBody(text: text, flags: flags))
-        if let serverToken {
-            var request = WorkerAPI.request(path: "v1/route", method: "POST", contentType: "application/json",
-                                            body: body, token: serverToken)
-            request.timeoutInterval = 10
+        #if BIBBLES_DEVELOPER
+        if serverToken == nil {
+            var request = URLRequest(url: HybridRouter.messagesURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "content-type")
+            request.setValue(key, forHTTPHeaderField: "x-api-key")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            request.httpBody = body
             return request
         }
-        var request = URLRequest(url: HybridRouter.messagesURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "content-type")
-        request.setValue(key, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.httpBody = body
+        #endif
+        var request = WorkerAPI.request(path: "v1/route", method: "POST", contentType: "application/json",
+                                        body: body, token: serverToken ?? "")
+        request.timeoutInterval = 10
         return request
     }
 
@@ -484,6 +512,7 @@ struct RouterClient {
         }
     }
 
+    #if BIBBLES_DEVELOPER
     /// Opens the connection early (free endpoint) so the first real request
     /// doesn't pay for the TLS handshake.
     func warmUp() async {
@@ -492,10 +521,12 @@ struct RouterClient {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         _ = try? await transport.send(request)
     }
+    #endif
 }
 
 enum RouterError: Error { case timeout }
 
+#if BIBBLES_DEVELOPER
 /// Keeps the connection warm while the router is in use, at most once a minute.
 @MainActor
 enum RouterWarmUp {
@@ -564,6 +595,7 @@ enum RouterKeychain {
 
     static var hasKey: Bool { read()?.isEmpty == false }
 }
+#endif
 
 // MARK: - Context flags (Accessibility only, no text leaves the Mac)
 

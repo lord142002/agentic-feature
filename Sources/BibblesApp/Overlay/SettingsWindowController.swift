@@ -74,7 +74,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 }
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case account, general, voice, microphone, dictation, shortcuts, permissions, about, developer
+    case account, general, voice, microphone, dictation, shortcuts, permissions, about
+    #if BIBBLES_DEVELOPER
+    case developer
+    #endif
     var id: String { rawValue }
 
     var title: String {
@@ -87,7 +90,9 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .shortcuts: return "Shortcuts"
         case .permissions: return "Permissions"
         case .about: return "About"
+        #if BIBBLES_DEVELOPER
         case .developer: return "Developer"
+        #endif
         }
     }
 
@@ -101,16 +106,22 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .shortcuts: return "command"
         case .permissions: return "lock.shield.fill"
         case .about: return "info.circle.fill"
+        #if BIBBLES_DEVELOPER
         case .developer: return "hammer.fill"
+        #endif
         }
     }
 
     /// Sidebar groups, like the website's sections.
     static let app: [SettingsSection] = [.account, .general]
     static let bibbles: [SettingsSection] = [.voice, .microphone, .dictation, .shortcuts]
-    /// The Developer page is no longer shown (routing settings are fixed).
+    /// The Developer page exists only in developer builds (BIBBLES_DEVELOPER).
     @MainActor static var setup: [SettingsSection] {
+        #if BIBBLES_DEVELOPER
+        [.permissions, .about, .developer]
+        #else
         [.permissions, .about]
+        #endif
     }
 }
 
@@ -422,7 +433,9 @@ private struct SettingsRootView: View {
         case .shortcuts: ShortcutsPage()
         case .permissions: PermissionsPage(model: model)
         case .about: AboutPage(model: model)
+        #if BIBBLES_DEVELOPER
         case .developer: DeveloperPage()
+        #endif
         }
     }
 }
@@ -1964,7 +1977,8 @@ private struct AboutPage: View {
     }
 }
 
-// MARK: - Developer (testing only)
+#if BIBBLES_DEVELOPER
+// MARK: - Developer (developer builds only)
 
 /// The same controls as the Option-click Developer menu, for testing the
 /// Tool Gate, keyword improvements and the AI router. Shown only in
@@ -2065,3 +2079,4 @@ private struct DeveloperPage: View {
         }
     }
 }
+#endif

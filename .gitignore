@@ -1,5 +1,6 @@
 # Swift and local build output
 .build/
+.build-dev/
 DerivedData/
 
 # macOS metadata and editor files

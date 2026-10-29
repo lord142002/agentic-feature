@@ -1,3 +1,4 @@
+#if BIBBLES_DEVELOPER
 import Foundation
 
 enum STTCorpusLanguage: String, Codable, CaseIterable { case english, hindi, hinglish }
@@ -121,3 +122,4 @@ struct STTBenchmarkSummary: Equatable {
         return sorted[Int((Double(sorted.count - 1) * percentile).rounded(.up))]
     }
 }
+#endif

@@ -89,7 +89,7 @@ final class HybridRouterTests: XCTestCase {
     // MARK: Timeout, offline, no key
 
     func testTimeoutFallsBack() async {
-        let client = RouterClient(key: "test", transport: FakeTransport(delay: 2))
+        let client = RouterClient(serverToken: "test", transport: FakeTransport(delay: 2))
         let outcome = await client.classify(text: "hello", flags: RouterFlags(), timeout: 0.2)
         XCTAssertNil(outcome.result)
         XCTAssertEqual(outcome.failure, "timeout")
@@ -97,21 +97,21 @@ final class HybridRouterTests: XCTestCase {
     }
 
     func testOfflineFallsBack() async {
-        let client = RouterClient(key: "test", transport: FakeTransport(error: URLError(.notConnectedToInternet)))
+        let client = RouterClient(serverToken: "test", transport: FakeTransport(error: URLError(.notConnectedToInternet)))
         let outcome = await client.classify(text: "hello", flags: RouterFlags(), timeout: 1)
         XCTAssertNil(outcome.result)
         XCTAssertEqual(outcome.failure, "offline")
     }
 
     func testHTTPErrorFallsBack() async {
-        let client = RouterClient(key: "test", transport: FakeTransport(body: "{}", status: 401))
+        let client = RouterClient(serverToken: "test", transport: FakeTransport(body: "{}", status: 401))
         let outcome = await client.classify(text: "hello", flags: RouterFlags(), timeout: 1)
         XCTAssertNil(outcome.result)
         XCTAssertEqual(outcome.failure, "http 401")
     }
 
     func testUnclearRequestUsesRouterAnswer() async {
-        let client = RouterClient(key: "test", transport: FakeTransport())
+        let client = RouterClient(serverToken: "test", transport: FakeTransport())
         let decision = await HybridRouter.decide(text: "the thing with the stuff from before, yeah", flags: RouterFlags(),
                                                  client: client, timeout: 1)
         XCTAssertEqual(decision.source, .router)
@@ -120,7 +120,7 @@ final class HybridRouterTests: XCTestCase {
     }
 
     func testUnsureRouterKeepsTodaysBehaviour() async {
-        let client = RouterClient(key: "test",
+        let client = RouterClient(serverToken: "test",
                                   transport: FakeTransport(body: #"{"content":[{"type":"text","text":"deep\",\"confidence\":0.5}"}]}"#))
         let decision = await HybridRouter.decide(text: "the thing with the stuff from before, yeah", flags: RouterFlags(),
                                                  client: client, timeout: 1)
@@ -130,7 +130,7 @@ final class HybridRouterTests: XCTestCase {
     }
 
     func testTimedOutRouterKeepsTodaysBehaviour() async {
-        let client = RouterClient(key: "test", transport: FakeTransport(delay: 2))
+        let client = RouterClient(serverToken: "test", transport: FakeTransport(delay: 2))
         let decision = await HybridRouter.decide(text: "the thing with the stuff from before, yeah", flags: RouterFlags(),
                                                  client: client, timeout: 0.2)
         XCTAssertEqual(decision.source, .fallback)
@@ -269,7 +269,7 @@ final class HybridRouterTests: XCTestCase {
 
     func testFillersAreKeptInTheTextSentToTheModel() async {
         let capturing = CapturingTransport()
-        let client = RouterClient(key: "test", transport: capturing)
+        let client = RouterClient(serverToken: "test", transport: capturing)
         let spoken = "uh, so, um, the thing from before"
         _ = await client.classify(text: spoken, flags: RouterFlags(), timeout: 1)
         let body = String(data: capturing.requests.first?.httpBody ?? Data(), encoding: .utf8) ?? ""
@@ -322,6 +322,26 @@ final class HybridRouterTests: XCTestCase {
         XCTAssertEqual(ToolGate.mode(for: .simple, preference: .auto, deepTasksLeft: 3), .ask)
     }
 
+    // MARK: Customer path: the router goes only to the Bibbles server
+
+    func testServerRouterRequestHasNoProviderKey() throws {
+        let request = try RouterClient(serverToken: "user-token").urlRequest(text: "hi", flags: RouterFlags())
+        XCTAssertTrue(request.url?.absoluteString.hasPrefix(WorkerAPI.baseURL.absoluteString) == true)
+        XCTAssertTrue(request.url?.path.hasSuffix("/v1/route") == true)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer user-token")
+        XCTAssertFalse((request.allHTTPHeaderFields ?? [:]).keys.contains { $0.lowercased().hasSuffix("api-key") })
+    }
+
+    #if BIBBLES_DEVELOPER
+    // MARK: Developer builds only
+
+    func testDeveloperKeyRequestGoesStraightToAnthropic() throws {
+        let request = try RouterClient(key: "dev-key").urlRequest(text: "hi", flags: RouterFlags())
+        XCTAssertEqual(request.url, HybridRouter.messagesURL)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "x-api-key"), "dev-key")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
     // MARK: Test set
 
     func testTestSetCoversEveryRouteAndLanguage() {
@@ -337,4 +357,5 @@ final class HybridRouterTests: XCTestCase {
             XCTAssertFalse(RouterPrompt.system.contains(item.text), item.text)
         }
     }
+    #endif
 }

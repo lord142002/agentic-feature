@@ -1,3 +1,4 @@
+#if BIBBLES_DEVELOPER
 import XCTest
 @testable import BibblesApp
 
@@ -29,3 +30,4 @@ final class STTEvaluationTests: XCTestCase {
         XCTAssertEqual(summary.p95FinalLatencyMilliseconds, 300)
     }
 }
+#endif

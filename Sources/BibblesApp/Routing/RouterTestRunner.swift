@@ -1,3 +1,4 @@
+#if BIBBLES_DEVELOPER
 import Foundation
 
 /// Developer-only: sends every `RouterTestSet` phrase (with its flags) to the
@@ -184,3 +185,4 @@ enum RouterTestRunner {
         return lines.joined(separator: "\n")
     }
 }
+#endif

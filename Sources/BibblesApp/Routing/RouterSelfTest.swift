@@ -1,6 +1,6 @@
 import Foundation
 
-/// Developer-only checks for the hybrid router that run without XCTest
+/// Checks for the hybrid router that run without XCTest
 /// (Macs with only the Command Line Tools). Launch the built binary with
 /// `--router-self-test [--out <file>]`. No network: every router call uses
 /// a fake transport. Mirrors Tests/BibblesAppTests/HybridRouterTests.swift.
@@ -45,12 +45,12 @@ enum RouterSelfTest {
         defaults.removeObject(forKey: HybridRouter.enabledKey)
         // The self-test never touches the real Keychain or the server (both
         // could wait forever: a Keychain prompt, or no sign-in).
+        #if BIBBLES_DEVELOPER
         RouterKeychain.testOverride = .some(nil)
+        defer { RouterKeychain.testOverride = nil }
+        #endif
         RouterClient.serverAllowed = false
-        defer {
-            RouterKeychain.testOverride = nil
-            RouterClient.serverAllowed = true
-        }
+        defer { RouterClient.serverAllowed = true }
         defaults.removeObject(forKey: ToolGate.enabledKey)
         defaults.removeObject(forKey: HybridRouter.keywordImprovementsKey)
 
@@ -70,20 +70,20 @@ enum RouterSelfTest {
         check("reject unclear label", HybridRouter.accept(RouterResult(route: .unclear, confidence: 0.99)) == nil)
 
         // Timeout, offline, HTTP error, no key
-        let timedOut = await RouterClient(key: "t", transport: Fake(delay: 2)).classify(text: "hi", flags: RouterFlags(), timeout: 0.2)
+        let timedOut = await RouterClient(serverToken: "t", transport: Fake(delay: 2)).classify(text: "hi", flags: RouterFlags(), timeout: 0.2)
         check("timeout falls back", timedOut.result == nil && timedOut.failure == "timeout" && timedOut.milliseconds < 1_500)
-        let offline = await RouterClient(key: "t", transport: Fake(offline: true)).classify(text: "hi", flags: RouterFlags(), timeout: 1)
+        let offline = await RouterClient(serverToken: "t", transport: Fake(offline: true)).classify(text: "hi", flags: RouterFlags(), timeout: 1)
         check("offline falls back", offline.result == nil && offline.failure == "offline")
-        let unauthorized = await RouterClient(key: "t", transport: Fake(body: "{}", status: 401)).classify(text: "hi", flags: RouterFlags(), timeout: 1)
+        let unauthorized = await RouterClient(serverToken: "t", transport: Fake(body: "{}", status: 401)).classify(text: "hi", flags: RouterFlags(), timeout: 1)
         check("http error falls back", unauthorized.result == nil && unauthorized.failure == "http 401")
         let vague = "the thing with the stuff from before, yeah"
-        let used = await HybridRouter.decide(text: vague, flags: RouterFlags(), client: RouterClient(key: "t", transport: Fake()), timeout: 1)
+        let used = await HybridRouter.decide(text: vague, flags: RouterFlags(), client: RouterClient(serverToken: "t", transport: Fake()), timeout: 1)
         check("unclear request uses router", used.source == .router && used.override == .write && used.jsonParsed == true)
         let unsure = await HybridRouter.decide(text: vague, flags: RouterFlags(),
-                                               client: RouterClient(key: "t", transport: Fake(body: #"{"content":[{"type":"text","text":"deep\",\"confidence\":0.5}"}]}"#)),
+                                               client: RouterClient(serverToken: "t", transport: Fake(body: #"{"content":[{"type":"text","text":"deep\",\"confidence\":0.5}"}]}"#)),
                                                timeout: 1)
         check("unsure router keeps today", unsure.source == .fallback && unsure.override == nil && unsure.routerRoute == .deep)
-        let slow = await HybridRouter.decide(text: vague, flags: RouterFlags(), client: RouterClient(key: "t", transport: Fake(delay: 2)), timeout: 0.2)
+        let slow = await HybridRouter.decide(text: vague, flags: RouterFlags(), client: RouterClient(serverToken: "t", transport: Fake(delay: 2)), timeout: 0.2)
         check("slow router keeps today", slow.source == .fallback && slow.override == nil && slow.reason == "timeout")
         // Never touch the real Keychain here (a test binary would trigger a
         // macOS permission prompt): pretend no key is saved.
@@ -143,7 +143,7 @@ enum RouterSelfTest {
         check("strip Japanese fillers", RoutingText.stripFillers("えっと、メールを書いて") == "メールを書いて")
         check("keep 'like' when meaningful", RoutingText.stripFillers("I like pizza") == "I like pizza")
         let capture = Capture()
-        _ = await RouterClient(key: "t", transport: capture).classify(text: "uh, so, um, the thing from before", flags: RouterFlags(), timeout: 1)
+        _ = await RouterClient(serverToken: "t", transport: capture).classify(text: "uh, so, um, the thing from before", flags: RouterFlags(), timeout: 1)
         check("fillers kept in text sent to model", capture.bodies.first?.contains("uh, so, um, the thing from before") == true)
         check("clauses split on connectors",
               RoutingText.clauses("I want to resign. Uh, so write a mail to HR here") == ["I want to resign", "write a mail to HR here"])
@@ -233,11 +233,11 @@ enum RouterSelfTest {
         check("screen fast: 'app' isn't matched inside 'happy'", ScreenComplexity.needsDeep(question: "explain why this graph is happy", ocr: []))
 
         // Router through the Bibbles server (no key in the app)
-        let serverClient = RouterClient(key: "", serverToken: "user-token")
+        let serverClient = RouterClient(serverToken: "user-token")
         if let serverRequest = try? serverClient.urlRequest(text: "hi", flags: RouterFlags()) {
             check("server router: Bibbles server, /v1/route", serverRequest.url?.path.hasSuffix("/v1/route") == true)
-            check("server router: sign-in token, no Anthropic key", serverRequest.value(forHTTPHeaderField: "Authorization") == "Bearer user-token"
-                  && serverRequest.value(forHTTPHeaderField: "x-api-key") == nil)
+            check("server router: sign-in token, no provider key", serverRequest.value(forHTTPHeaderField: "Authorization") == "Bearer user-token"
+                  && !(serverRequest.allHTTPHeaderFields ?? [:]).keys.contains { $0.lowercased().hasSuffix("api-key") })
             let sent = serverRequest.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
             check("server router: Haiku, text only", sent?["model"] as? String == HybridRouter.model
                   && !(String(data: serverRequest.httpBody ?? Data(), encoding: .utf8) ?? "").contains("image"))
@@ -247,15 +247,18 @@ enum RouterSelfTest {
         check("deep with none left → light", ToolGate.mode(for: .deep, preference: .auto, deepTasksLeft: 0) == .ask)
         check("deep with some left → deep", ToolGate.mode(for: .deep, preference: .auto, deepTasksLeft: 3) == .deep)
 
-        // Test set
+        #if BIBBLES_DEVELOPER
+        // Test set (developer builds only)
         check("test set size", RouterTestSet.cases.count >= 140)
         check("test set covers every route", Set(RouterTestSet.cases.map(\.expected)) == Set(HybridRoute.allCases))
         check("prompt examples don't leak", RouterTestSet.cases.allSatisfy { !RouterPrompt.system.contains($0.text) })
+        #endif
 
         let failed = results.filter { !$0.1 }
         var lines = ["Router self-test: \(results.count - failed.count)/\(results.count) passed"]
         lines += results.map { "\($0.1 ? "PASS" : "FAIL")  \($0.0)" }
 
+        #if BIBBLES_DEVELOPER
         // Local keyword-pass preview over the test set (no network).
         var todayCorrect = 0, keywordDecided = 0, keywordCorrect = 0, newCorrect = 0
         for item in RouterTestSet.cases {
@@ -281,6 +284,7 @@ enum RouterSelfTest {
             let local = RouterTestRunner.localRoutes(for: item)
             lines.append("#\(index + 1) [\(item.language)] expected \(item.expected.rawValue) · today \(local.today.rawValue) · \(RouterTestRunner.describe(local.verdict))")
         }
+        #endif
         return (lines.joined(separator: "\n"), failed.isEmpty)
     }
 
