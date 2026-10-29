@@ -270,10 +270,14 @@ private struct ScreenAgentCardView: View {
 
     @ViewBuilder private var content: some View {
         switch session.phase {
-        case .looking:
-            working("Looking at the app…")
-        case .planning:
-            working(strings.planning)
+        case .looking, .planning:
+            VStack(alignment: .leading, spacing: 12) {
+                working(session.phase == .looking ? (session.round > 1 ? "Looking again…" : "Looking at the app…") : strings.planning)
+                if session.round > 1 {
+                    Text("Part \(session.round) · \(session.history.count) steps done").font(.system(size: 12)).foregroundStyle(.white.opacity(0.55))
+                    HStack { Spacer(); cardButton(strings.stop, prominent: false) { session.stop() } }
+                }
+            }
         case .preview:
             previewContent
         case .running, .stopping:
@@ -324,7 +328,8 @@ private struct ScreenAgentCardView: View {
     private var previewContent: some View {
         VStack(alignment: .leading, spacing: 12) {
             if !session.planSummary.isEmpty {
-                Text(session.planSummary).font(.system(size: 13)).foregroundStyle(.white.opacity(0.75))
+                Text((session.round > 1 ? "Part \(session.round): " : "") + session.planSummary)
+                    .font(.system(size: 13)).foregroundStyle(.white.opacity(0.75))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if session.preview.isEmpty {
@@ -338,7 +343,9 @@ private struct ScreenAgentCardView: View {
                                 Text(line.text).foregroundStyle(.white.opacity(0.9))
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 4)
-                                if !line.undoable {
+                                if line.asksFirst {
+                                    Image(systemName: "hand.raised.fill").font(.system(size: 10)).foregroundStyle(Color.yellow)
+                                } else if !line.undoable {
                                     Text("no undo").font(.system(size: 10)).foregroundStyle(Color.orange.opacity(0.8))
                                 }
                             }
@@ -360,7 +367,7 @@ private struct ScreenAgentCardView: View {
                     onClose()
                 }
                 if !session.preview.isEmpty {
-                    cardButton(strings.start, prominent: true) { session.confirm() }
+                    cardButton(session.startTitle, prominent: true) { session.confirm() }
                 }
             }
         }

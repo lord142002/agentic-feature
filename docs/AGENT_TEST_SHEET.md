@@ -58,3 +58,15 @@ For each test, ask by voice (hold Control + Option) or by typing (double-tap Con
 | S8 | Turn **AI Agents (Screen)** off and repeat S1 | — | No agent card. Today's form fill runs, using placeholders like [Your Name]. |
 
 **Privacy check:** with a proxy such as Proxyman, S1 sends **no request at all**. S3 sends one planner request with menu and button titles and field labels only. It never contains your details or what is typed in the fields.
+
+## Screen agent: acting on screen (clicks, typing, music, several parts)
+
+Needs **Screen Recording** permission for Bibbles Dev, so the planner can see the screen and click on it.
+
+| # | Where | Say | Expected |
+|---|---|---|---|
+| A1 | A piano website in Safari or Chrome (for example a virtual piano page) | "Make up a happy theme tune and play it on this piano" | Preview: "Play 32 notes (about 12 s)". Start: the keys are clicked in rhythm. Stop halts at once. |
+| A2 | Mail, with a message open | "Reply saying I'll join at 5 and send it" | Part 1 previews the clicks and the typed text, then waits for Start. Before Send: **"Press Send in Mail?"**. Choose Stop to check that nothing is sent. |
+| A3 | Messages, with a conversation open | "Tell Sam I'm on my way" | Preview: type the text, then "Press return (asks you first)". The message is sent only after you confirm. |
+| A4 | Safari | "Search the web for Holi festival 2026 and open the first result" | Part 1: click the address bar, type, Return. "Looking again…". Part 2: click the first result. |
+| A5 | Any app | A request that would need **Empty Trash** or **Log Out** | That step is skipped with "Bibbles never presses …". |

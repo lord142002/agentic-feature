@@ -506,15 +506,16 @@ enum AgentPlanner {
     /// returns a plan `parse` accepts; each call is limited to 5 seconds.
     static func planned<Parsed>(system: String, user: String, models: [ModelChoice],
                                 schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan",
+                                maxTokens: Int = maxOutputTokens, timeLimit: TimeInterval = timeout, image: Data? = nil,
                                 session: URLSession,
                                 parse: (String) -> Parsed?) async throws -> (AgentPlannerReply, Parsed) {
         guard LocalMode.isOn else { throw AgentError.needsLocalMode }
         var lastProblem = "no reply"
         for (index, model) in models.enumerated() {
             do {
-                let reply = try await withTimeout(timeout) {
+                let reply = try await withTimeout(timeLimit) {
                     try await ask(model: model, system: system, user: user, backup: index > 0, session: session,
-                                  schema: schema, schemaName: schemaName)
+                                  schema: schema, schemaName: schemaName, maxTokens: maxTokens, image: image)
                 }
                 if let parsed = parse(reply.text) { return (reply, parsed) }
                 lastProblem = "invalid plan"
@@ -535,9 +536,11 @@ enum AgentPlanner {
 
     static func ask(model: ModelChoice, system: String, user: String, backup: Bool,
                     session: URLSession, schema: [String: Any] = AgentPlanParser.schema,
-                    schemaName: String = "agent_plan") async throws -> AgentPlannerReply {
+                    schemaName: String = "agent_plan", maxTokens: Int = maxOutputTokens,
+                    image: Data? = nil) async throws -> AgentPlannerReply {
         let started = Date()
-        let request = try request(model: model, system: system, user: user, schema: schema, schemaName: schemaName)
+        let request = try request(model: model, system: system, user: user, schema: schema, schemaName: schemaName,
+                                  maxTokens: maxTokens, image: image)
         let data = try await LocalBackend.send(request, provider: model.provider == .anthropic ? "Anthropic" : "OpenRouter",
                                                slot: model.provider.keySlot, session: session)
         guard var text = ClaudeAPI.responseText(from: data) else {
@@ -560,13 +563,23 @@ enum AgentPlanner {
     }
 
     static func request(model: ModelChoice, system: String, user: String,
-                        schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan") throws -> URLRequest {
+                        schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan",
+                        maxTokens: Int = maxOutputTokens, image: Data? = nil) throws -> URLRequest {
         switch model.provider {
         case .openrouter:
+            // A screenshot, when there is one, goes with the text as a data URL.
+            let userContent: Any
+            if let image {
+                userContent = [["type": "text", "text": user],
+                               ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + image.base64EncodedString()]]]
+                    as [[String: Any]]
+            } else {
+                userContent = user
+            }
             var body: [String: Any] = [
                 "model": model.id,
-                "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
-                "max_tokens": maxOutputTokens,
+                "messages": [["role": "system", "content": system], ["role": "user", "content": userContent]],
+                "max_tokens": maxTokens,
                 "provider": LocalBackend.privacy,
                 "reasoning": ["effort": "low"],
                 "response_format": ["type": "json_schema",
@@ -576,11 +589,18 @@ enum AgentPlanner {
             if model.acceptsTemperature { body["temperature"] = 0 }
             return try LocalBackend.openRouterRequest(path: "chat/completions", json: body, key: LocalBackend.key(.openrouter))
         case .anthropic:
-            var messages: [[String: Any]] = [["role": "user", "content": user]]
+            let userContent: Any
+            if let image {
+                userContent = [["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": image.base64EncodedString()]],
+                               ["type": "text", "text": user]] as [[String: Any]]
+            } else {
+                userContent = user
+            }
+            var messages: [[String: Any]] = [["role": "user", "content": userContent]]
             if prefills(model) { messages.append(["role": "assistant", "content": "{"]) }
             var body: [String: Any] = [
                 "model": model.id,
-                "max_tokens": maxOutputTokens,
+                "max_tokens": maxTokens,
                 "system": system,
                 "messages": messages
             ]

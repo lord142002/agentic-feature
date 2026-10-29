@@ -122,24 +122,87 @@ final class ScreenAgentTests: XCTestCase {
         let menus: [(path: [String], enabled: Bool)] = [(["File", "Export as PDF..."], true), (["File", "Print…"], true), (["Edit", "Delete"], true)]
         let plan = ScreenPlan(summary: "", steps: [.menu(["File", "Export as PDF…"]), .press("Save"), .menu(["Edit", "Delete"])])
         let preview = ScreenPlanValidator.preview(plan, snapshot: snapshot(menus: menus), request: "click export and save it as a pdf", details: me)
-        XCTAssertEqual(preview.lines.map(\.text), ["Choose File ▸ Export as PDF...", "Press “Save”"],
-                       "“…” and “...” match; Save in the sheet the menu opens is allowed")
-        XCTAssertEqual(preview.dropped.count, 1)
-        XCTAssertTrue(preview.dropped[0].reason.contains("never presses"))
+        XCTAssertEqual(preview.lines.map(\.text), ["Choose File ▸ Export as PDF...", "Press “Save”", "Choose Edit ▸ Delete (asks you first)"],
+                       "“…” and “...” match; Save in the sheet the menu opens is allowed; Delete asks first")
+        XCTAssertTrue(preview.dropped.isEmpty)
         XCTAssertFalse(preview.lines[0].undoable)
+        XCTAssertTrue(preview.lines[2].asksFirst)
+        XCTAssertTrue(preview.needsApproval)
     }
 
     @MainActor
-    func testFinalButtonsAreNeverPressed() {
-        let controls = ["Sign up", "Submit", "Send", "Pay now", "Buy", "Delete account", "Place order", "Registrieren",
-                        "Enviar", "S'inscrire", "送信"].map { ScreenControl(role: "AXButton", title: $0, isOn: nil, options: []) }
+    func testFinalButtonsAskFirstAndSomeAreNeverPressed() {
+        let finals = ["Sign up", "Submit", "Send", "Pay now", "Buy", "Place order", "Registrieren", "Enviar", "S'inscrire", "送信"]
+        let nevers = ["Empty Trash", "Delete Account", "Log Out", "Shut Down"]
+        let controls = (finals + nevers).map { ScreenControl(role: "AXButton", title: $0, isOn: nil, options: []) }
         let plan = ScreenPlan(summary: "", steps: controls.map { .press($0.title) })
         let preview = ScreenPlanValidator.preview(plan, snapshot: snapshot(controls: controls), request: "sign me up", details: me)
-        XCTAssertTrue(preview.isEmpty)
-        XCTAssertEqual(preview.dropped.count, controls.count)
+        XCTAssertEqual(preview.actions.count, finals.count)
+        XCTAssertTrue(preview.lines.allSatisfy(\.asksFirst), "every final action asks first")
+        XCTAssertEqual(preview.dropped.count, nevers.count, "these are never pressed, even when asked")
         XCTAssertNil(ScreenSafety.blockedWord(in: "Save"))
         XCTAssertNil(ScreenSafety.blockedWord(in: "Export"))
         XCTAssertNil(ScreenSafety.blockedWord(in: "Next"))
+        XCTAssertNotNil(ScreenSafety.neverWord(in: "Empty Trash"))
+        XCTAssertNil(ScreenSafety.neverWord(in: "Send"))
+    }
+
+    // MARK: Clicks, typing, keys, music
+
+    func testParsesActSteps() {
+        let text = #"{"summary":"play","done":false,"steps":[{"action":"click","x":500,"y":250,"label":"Search"},{"action":"type","text":"hello"},{"action":"key","keys":"cmd+l"},{"action":"key","keys":"cmd+q"},{"action":"play","notes":[{"x":100,"y":900,"ms":300},{"key":"a","ms":50},{"x":2000,"y":1,"ms":300}]},{"action":"wait","ms":99999},{"action":"click","x":-5,"y":10}]}"#
+        let parsed = ScreenPlanParser.parse(text)
+        XCTAssertEqual(parsed.plan?.done, false)
+        XCTAssertEqual(parsed.plan?.steps, [
+            .click(x: 0.5, y: 0.25, label: "Search", final: false),
+            .type("hello"),
+            .key("cmd+l", final: false),
+            .play([ScreenNote(x: 0.1, y: 0.9, ms: 300), ScreenNote(key: "a", ms: 60)]),
+            .wait(5_000)
+        ], "cmd+q is never pressed; points outside 0…1000 are dropped; times are clamped")
+        XCTAssertEqual(parsed.dropped.map(\.index), [3, 6])
+    }
+
+    func testKeysAndShortcuts() {
+        XCTAssertEqual(ScreenKeys.parse("return")?.code, 36)
+        XCTAssertEqual(ScreenKeys.parse("cmd+L")?.flags, .maskCommand)
+        XCTAssertEqual(ScreenKeys.parse("cmd+shift+d")?.flags, [.maskCommand, .maskShift])
+        XCTAssertNil(ScreenKeys.parse("cmd+q"))
+        XCTAssertNil(ScreenKeys.parse("hyper+a"))
+        XCTAssertNil(ScreenKeys.parse("f13"))
+    }
+
+    func testScreenshotPointsBecomeScreenPoints() {
+        // A 1000×800 display at the origin, main display 800 tall.
+        let point = ScreenGeometry.globalPoint(x: 0.25, y: 0.5, displayFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                                               primaryHeight: 800)
+        XCTAssertEqual(point, CGPoint(x: 250, y: 400))
+        let top = ScreenGeometry.globalPoint(x: 0, y: 0, displayFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800), primaryHeight: 800)
+        XCTAssertEqual(top, CGPoint(x: 0, y: 0), "top-left of the screenshot is top-left of the screen")
+    }
+
+    @MainActor
+    func testPianoMailAndMessagesPlans() {
+        var withScreenshot = snapshot()
+        withScreenshot.screenFrame = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+        let piano = ScreenPlan(summary: "", steps: [.play([ScreenNote(x: 0.1, y: 0.9, ms: 500), ScreenNote(x: 0.2, y: 0.9, ms: 500)])])
+        let played = ScreenPlanValidator.preview(piano, snapshot: withScreenshot, request: "play a happy tune", details: me)
+        XCTAssertEqual(played.lines.map(\.text), ["Play 2 notes (about 1 s)"])
+        XCTAssertFalse(played.needsApproval, "clicks alone run straight on")
+        let noScreenshot = ScreenPlanValidator.preview(piano, snapshot: snapshot(), request: "play", details: me)
+        XCTAssertTrue(noScreenshot.isEmpty, "no clicking without Screen Recording")
+
+        let mail = ScreenPlan(summary: "", steps: [.click(x: 0.5, y: 0.5, label: "Message body", final: false),
+                                                   .type("Hi Sam, I'll join at 5."),
+                                                   .key("cmd+shift+d", final: true)])
+        let written = ScreenPlanValidator.preview(mail, snapshot: withScreenshot, request: "reply I'll join at 5 and send", details: me)
+        XCTAssertEqual(written.lines.map(\.text), ["Click “Message body”", "Type “Hi Sam, I'll join at 5.”", "Press cmd+shift+d (asks you first)"])
+        XCTAssertTrue(written.needsApproval)
+
+        let messages = ScreenSnapshot(appName: "Messages", menus: [], controls: [], fields: [], screenFrame: CGRect(x: 0, y: 0, width: 10, height: 10))
+        let sent = ScreenPlanValidator.preview(ScreenPlan(summary: "", steps: [.type("On my way"), .key("return", final: false)]),
+                                               snapshot: messages, request: "tell Sam on my way", details: me)
+        XCTAssertTrue(sent.lines[1].asksFirst, "Return sends in Messages, so it asks first")
     }
 
     @MainActor

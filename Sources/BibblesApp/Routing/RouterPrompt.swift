@@ -125,13 +125,15 @@ enum RouterPrompt {
         prompt
             .replacingOccurrences(of: "form_fill: fill in a form that is on screen (sign-up, checkout, application, contact form).",
                                   with: "form_fill: fill in a form that is on screen (sign-up, checkout, application, contact form) with text the user dictates now.\n"
-                                    + "agent_screen: DO something in the app on screen for the user: click or press a button or menu item, export or save as, switch an app option on or off, choose an option, or fill a form with the user's SAVED details (\"my details\"). A command to do it now (\"export this to PDF\", \"click Save\") is agent_screen even when it says \"this\"; asking where something is or how to do it stays screen; Mac-wide dark mode, volume and brightness stay command.")
+                                    + "agent_screen: DO something on screen for the user, in any app or website: click or press buttons and menu items, export or save as, switch options, fill a form with the user's SAVED details (\"my details\"), write and send an email in Mail or a message in Messages, use a website (search, navigate, fill it in), or play music on a piano or instrument shown on screen. A command to do it now (\"export this to PDF\", \"click Save\") is agent_screen even when it says \"this\"; asking where something is or how to do it stays screen; Mac-wide dark mode, volume and brightness stay command.")
             .replacingOccurrences(of: #""fill this out with my usual details" -> {"route":"form_fill","confidence":0.9}"#,
                                   with: #""fill this out with my usual details" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
                                     + #""hit Export and save this as a PDF" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
                                     + #""Rellena este formulario con mis datos guardados" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
                                     + #""untick 'send me newsletters' on this page" -> {"route":"agent_screen","confidence":0.88}"# + "\n"
                                     + #""turn this picture into a PDF file" -> {"route":"agent_screen","confidence":0.88}"# + "\n"
+                                    + #""on this piano site make up a happy tune and play it" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
+                                    + #""reply to this mail saying I'll join at 5 and send it" -> {"route":"agent_screen","confidence":0.88}"# + "\n"
                                     + #""how do I export this as a PDF" -> {"route":"screen","confidence":0.88}"#)
     }
     #endif
