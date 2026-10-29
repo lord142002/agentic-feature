@@ -50,6 +50,8 @@ enum BillingAPI {
 
     /// The plans for the "Choose your plan" window, with live Dodo prices. No sign-in needed.
     static func plans(session: URLSession = .shared) async throws -> [BillingPlan] {
+        // Local mode (developer builds) never contacts a Bibbles server.
+        guard !Backends.isLocal else { throw BillingError.unavailable }
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/billing/plans"))
         request.timeoutInterval = 20
         request.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -80,6 +82,7 @@ enum BillingAPI {
 
     private static func send(path: String, method: String, body: Data? = nil,
                              session: URLSession) async throws -> [String: Any] {
+        guard !Backends.isLocal else { throw BillingError.unavailable }
         let token = try await AccountSession.shared.workerAccessToken()
         var request = URLRequest(url: baseURL.appendingPathComponent(path))
         request.httpMethod = method

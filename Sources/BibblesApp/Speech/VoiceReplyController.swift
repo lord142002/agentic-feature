@@ -359,7 +359,7 @@ final class VoiceReplyController: ObservableObject {
     /// Saves every voice's preview on this Mac in the background (once per
     /// voice), so the first click on a voice card is instant too.
     func prefetchPreviews() {
-        guard !isPrefetchingPreviews, AccountSession.shared.email != nil else { return }
+        guard !isPrefetchingPreviews, AccountSession.shared.email != nil || Backends.isLocal else { return }
         let missing = OpenRouterSpeech.englishVoices.map(\.id).filter { VoicePreviewCache.load(voice: $0) == nil }
         guard !missing.isEmpty else { return }
         isPrefetchingPreviews = true

@@ -22,7 +22,7 @@ final class MessagesVisionProvider: VisionGroundingProviding {
     }
 
     func ground(_ request: VisionGroundingRequest) async throws -> GroundedAnswer {
-        _ = try await AccountSession.shared.workerAccessToken()
+        try await Backends.current.ensureReady()
         guard let imageData = Self.jpegData(from: request.image) else {
             throw VisionGroundingError.imageEncodingFailed
         }

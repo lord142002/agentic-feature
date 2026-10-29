@@ -19,6 +19,10 @@ final class DeveloperControls: ObservableObject {
     /// The latest Test result for each key ("OK", "invalid key"…).
     @Published private(set) var keyTest: [DeveloperKeySlot: DeveloperKeyTestResult] = [:]
     @Published private(set) var keyTesting: Set<DeveloperKeySlot> = []
+    /// "Local mode (use my keys, skip the server)", default OFF.
+    @Published private(set) var localMode = LocalMode.isOn
+    @Published private(set) var costCount = 0
+    @Published private(set) var costTotal = 0.0
     @Published private(set) var recordingLog = false
     @Published private(set) var logCount = 0
     @Published private(set) var testRunning = false
@@ -37,6 +41,9 @@ final class DeveloperControls: ObservableObject {
         keywordImprovements = HybridRouter.keywordImprovementsEnabled
         aiRouter = HybridRouter.isEnabled
         keyStatus = Dictionary(uniqueKeysWithValues: DeveloperKeySlot.allCases.map { ($0, DeveloperKeychain.status($0)) })
+        localMode = LocalMode.isOn
+        costCount = LocalCostLog.shared.entries.count
+        costTotal = LocalCostLog.shared.totalCost
         recordingLog = ToolGateLog.shared.isRecording
         logCount = ToolGateLog.shared.entries.count
     }
@@ -56,6 +63,44 @@ final class DeveloperControls: ObservableObject {
     func setAIRouter(_ on: Bool) {
         HybridRouter.isEnabled = on
         if on { RouterWarmUp.ifNeeded() }
+        refresh()
+    }
+
+    /// ON: zero contact with the Bibbles server. Usage shown is the last
+    /// one synced in server mode, so it is reloaded either way.
+    func setLocalMode(_ on: Bool) {
+        LocalMode.isOn = on
+        refresh()
+        show(on ? "Local mode on: requests go straight to the providers with your keys" : "Local mode off: requests go through the Bibbles server")
+        Task { await AccountSession.shared.refreshWorkerUsage() }
+    }
+
+    /// Keys Local mode can't work without (light tasks, deep tasks).
+    var localModeWarning: String? {
+        guard localMode else { return nil }
+        var missing: [String] = []
+        if !hasKey(.openrouter) && !hasKey(.anthropic) { missing.append("OpenRouter") }
+        if !hasKey(.anthropic) { missing.append("Anthropic") }
+        guard !missing.isEmpty else { return nil }
+        return "Local mode needs your \(missing.joined(separator: " and ")) key\(missing.count == 1 ? "" : "s") (below)."
+    }
+
+    @discardableResult
+    func copyCostLog() -> Bool {
+        refresh()
+        guard costCount > 0 else {
+            show("No Local mode requests yet.", error: true)
+            return false
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(LocalCostLog.shared.table(), forType: .string)
+        show("Cost log copied (\(costCount))")
+        return true
+    }
+
+    func clearCostLog() {
+        LocalCostLog.shared.clear()
+        show("Cost log cleared")
         refresh()
     }
 

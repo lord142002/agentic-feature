@@ -405,6 +405,15 @@ final class AccountSession: ObservableObject {
             billingStatus = nil
             return
         }
+        #if BIBBLES_DEVELOPER
+        // Local mode: show the last usage synced in server mode; never contact the server.
+        if LocalMode.isOn {
+            let cached = LocalUsageCache.load()
+            workerUsage = cached?.snapshot
+            usageError = cached == nil ? "Local mode — usage hasn't been synced in server mode yet." : nil
+            return
+        }
+        #endif
         let requestID = UUID()
         usageRefreshID = requestID
         usageIsRefreshing = true
@@ -413,6 +422,9 @@ final class AccountSession: ObservableObject {
             let payload = try await WorkerAPI.me()
             guard email == requestedEmail, usageRefreshID == requestID else { return }
             guard let snapshot = WorkerUsageSnapshot(payload) else { throw WorkerError.invalidResponse }
+            #if BIBBLES_DEVELOPER
+            LocalUsageCache.save(payload)
+            #endif
             workerUsage = snapshot
             usageError = nil
             if let fromWorker = snapshot.entitlement {

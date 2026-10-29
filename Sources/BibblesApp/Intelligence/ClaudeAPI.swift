@@ -104,6 +104,14 @@ enum ClaudeAPI {
     }
 
     static func taskLabel(for model: String) -> String {
+        #if BIBBLES_DEVELOPER
+        // Developer builds: a small LOCAL MODE badge on the answer card.
+        if LocalMode.isOn { return baseTaskLabel(for: model) + " · LOCAL MODE" }
+        #endif
+        return baseTaskLabel(for: model)
+    }
+
+    private static func baseTaskLabel(for model: String) -> String {
         if model == fastModel || model.contains("haiku") { return "Light Task" }
         if model.contains("sonnet") || model.contains("opus") { return "Deep Task" }
         return model // "Live weather" and similar, which name no model
@@ -131,7 +139,7 @@ enum ClaudeAPI {
     /// Adapts legacy text-only Messages-shaped call sites to the authenticated
     /// Worker. Multimodal call sites use WorkerAPI.vision directly.
     static func data(for request: URLRequest, session: URLSession = .shared) async throws -> (Data, URLResponse) {
-        _ = try await AccountSession.shared.workerAccessToken()
+        try await Backends.current.ensureReady()
         guard let raw = request.httpBody,
               let body = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any],
               let items = body["messages"] as? [[String: Any]] else { throw WorkerError.invalidResponse }

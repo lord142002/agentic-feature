@@ -361,6 +361,11 @@ private struct SettingsRootView: View {
             groupLabel("SETUP")
             ForEach(SettingsSection.setup) { sidebarRow($0) }
             Spacer()
+            #if BIBBLES_DEVELOPER
+            LocalModeBadge()
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+            #endif
             Text("Bibbles \(SettingsRootView.version)")
                 .font(.system(size: 12))
                 .foregroundStyle(.white.opacity(0.55))
@@ -1980,6 +1985,24 @@ private struct AboutPage: View {
 #if BIBBLES_DEVELOPER
 // MARK: - Developer (developer builds only)
 
+/// Shown on Settings while Local mode is on.
+private struct LocalModeBadge: View {
+    @ObservedObject private var controls = DeveloperControls.shared
+
+    var body: some View {
+        if controls.localMode {
+            Text("LOCAL MODE")
+                .font(.system(size: 10.5, weight: .heavy, design: .rounded))
+                .tracking(1.2)
+                .foregroundStyle(Color.black)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Capsule().fill(Color.orange))
+                .accessibilityLabel("Local mode is on")
+        }
+    }
+}
+
 /// The same controls as the Option-click Developer menu, for testing the
 /// Tool Gate, keyword improvements and the AI router. Shown only in
 /// developer builds.
@@ -1992,6 +2015,23 @@ private struct DeveloperPage: View {
             PageHeader(title: "Developer", subtitle: "Testing controls for routing, your own API keys, Local mode and agents. Developer builds only.")
             if let warning = controls.warning {
                 AccountNotice(message: warning, isError: true).padding(.bottom, 18)
+            }
+            SectionLabel(text: "Local mode")
+            Card {
+                SettingRow(title: "Local mode (use my keys, skip the server)",
+                           detail: "Off: everything goes through the Bibbles server, exactly as for customers. On: every feature calls the providers directly with your keys below, and Bibbles makes no request to its server at all (not even usage). Plan limits are shown from the last sync but not counted. Your sign-in stays as it is.") {
+                    HStack(spacing: 10) {
+                        LocalModeBadge()
+                        Toggle("", isOn: Binding(get: { controls.localMode }, set: { controls.setLocalMode($0) }))
+                            .toggleStyle(.switch).labelsHidden()
+                            .accessibilityLabel("Local mode")
+                    }
+                }
+                if let warning = controls.localModeWarning {
+                    AccountNotice(message: warning, isError: true)
+                        .padding(.horizontal, 22)
+                        .padding(.bottom, 16)
+                }
             }
             SectionLabel(text: "Routing")
             Card {
@@ -2030,6 +2070,16 @@ private struct DeveloperPage: View {
                     }
                     .padding(.horizontal, 22)
                     .padding(.bottom, 16)
+                }
+            }
+            SectionLabel(text: "Local mode cost log")
+            Card {
+                SettingRow(title: "Estimated cost",
+                           detail: "\(controls.costCount) Local mode requests, about \(ModelCatalog.formatted(controls.costTotal)) in total (tokens × the price table in docs/MODELS.md). Feature, model, tokens and time only, never your words.") {
+                    HStack(spacing: 10) {
+                        PillButton(title: "Copy") { controls.copyCostLog() }
+                        PillButton(title: "Clear") { controls.clearCostLog() }
+                    }
                 }
             }
             SectionLabel(text: "Tool Gate log")

@@ -443,14 +443,14 @@ struct RouterClient {
     #endif
 
     /// Developer builds: the developer key when one is saved. Otherwise the
-    /// Bibbles server for any signed-in user. nil (not signed in) means
-    /// "skip the router".
+    /// current backend: the Bibbles server for any signed-in user (Local
+    /// mode never contacts it). nil (not signed in, no key) means "skip the
+    /// router".
     static func live() async -> RouterClient? {
         #if BIBBLES_DEVELOPER
         if let developer = developer() { return developer }
         #endif
-        guard serverAllowed, let token = try? await AccountSession.shared.workerAccessToken() else { return nil }
-        return RouterClient(serverToken: token)
+        return await Backends.current.routerClient()
     }
 
     static func resolve(_ given: RouterClient?) async -> RouterClient? {

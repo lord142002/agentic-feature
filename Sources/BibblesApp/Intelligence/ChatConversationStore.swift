@@ -457,7 +457,7 @@ final class ChatConversationStore: ObservableObject {
             }
             historyLimit = ToolGate.historyLimit(for: route)
             let deepLeft = ToolGate.deepTasksLeft
-            if deepLeft == nil, AccountSession.shared.email != nil {
+            if deepLeft == nil, AccountSession.shared.email != nil, !Backends.isLocal {
                 // Usage not loaded yet: load it so the next decision is exact.
                 Task { await AccountSession.shared.refreshWorkerUsage() }
             }

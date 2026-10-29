@@ -29,7 +29,7 @@ final class WorkerTranscriptionStream: TranscriptionStreaming {
 
     func connect() async throws {
         await disconnect()
-        _ = try await AccountSession.shared.workerAccessToken()
+        try await Backends.current.ensureReady()
         audio = Data()
         isOpen = true
     }

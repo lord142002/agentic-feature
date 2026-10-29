@@ -440,6 +440,20 @@ private struct NotchPillView: View {
                 }
                 // Keep the icons level with the menu bar, above the extra drop.
                 .padding(.bottom, NotchGeometry.drop)
+                #if BIBBLES_DEVELOPER
+                if LocalMode.isOn {
+                    // Developer builds: requests go straight to the providers.
+                    VStack {
+                        Spacer(minLength: 0)
+                        Text("LOCAL MODE")
+                            .font(.system(size: 7, weight: .heavy, design: .rounded))
+                            .tracking(0.8)
+                            .foregroundStyle(Color.orange)
+                            .padding(.bottom, 1)
+                    }
+                    .allowsHitTesting(false)
+                }
+                #endif
             }
         }
         .contentShape(Rectangle())

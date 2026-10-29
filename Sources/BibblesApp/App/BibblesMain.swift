@@ -1321,7 +1321,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         }
         let chatConversationID = inChat ? chatStore.beginScreenQuestion(question) : nil
         if inChat, chatConversationID == nil { return }
-        guard AccountSession.shared.email != nil else {
+        guard AccountSession.shared.email != nil || Backends.isLocal else {
             shouldSpeakNextAnswer = false
             if let chatConversationID {
                 chatStore.failScreenQuestion(WorkerError.signInRequired, in: chatConversationID)

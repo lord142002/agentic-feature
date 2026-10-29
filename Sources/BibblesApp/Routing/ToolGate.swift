@@ -237,6 +237,8 @@ enum ToolGate {
 
     /// Deep tasks left on the user's plan; nil while usage hasn't loaded.
     @MainActor static var deepTasksLeft: Int? {
+        // Local mode (developer builds): plan limits are shown, not enforced.
+        if Backends.isLocal { return Int.max }
         guard let counters = AccountSession.shared.workerUsage?.counters else { return nil }
         return counters.first { ["deep_tasks", "deep"].contains($0.id.lowercased()) }?.remaining ?? 0
     }

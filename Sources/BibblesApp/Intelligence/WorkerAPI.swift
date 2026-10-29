@@ -77,8 +77,10 @@ enum WorkerError: LocalizedError, Equatable {
     }
 }
 
-/// Sole transport for metered AI operations. The app contains no provider
-/// credential and never retries an authenticated request anonymously.
+/// Entry point for metered AI operations. Every call goes through
+/// `Backends.current`: the Bibbles Worker for customers (the app contains no
+/// provider credential and never retries an authenticated request
+/// anonymously); developer builds can switch to Local mode.
 enum WorkerAPI {
     static let baseURL = URL(string: "https://bibbles-api.bibbles.workers.dev")!
 
@@ -127,10 +129,23 @@ enum WorkerAPI {
         return request
     }
 
+    #if BIBBLES_DEVELOPER
+    /// Tests only: a stand-in sign-in token, so Worker requests can be checked without an account.
+    static var testAccessToken: String?
+    #endif
+
+    /// The signed-in user's token for Worker requests.
+    static func accessToken() async throws -> String {
+        #if BIBBLES_DEVELOPER
+        if let testAccessToken { return testAccessToken }
+        #endif
+        return try await AccountSession.shared.workerAccessToken()
+    }
+
     static func send(path: String, method: String, contentType: String? = nil,
                      body: Data? = nil, session: URLSession = .shared,
                      query: [URLQueryItem]? = nil) async throws -> Data {
-        let token = try await AccountSession.shared.workerAccessToken()
+        let token = try await accessToken()
         return try await perform(request(path: path, method: method, contentType: contentType,
                                          body: body, token: token, query: query), session: session)
     }
@@ -151,10 +166,7 @@ enum WorkerAPI {
 
     static func chat(mode: Mode, messages: [[String: String]], maxTokens: Int? = nil,
                      session: URLSession = .shared) async throws -> String {
-        let body = chatBody(mode: mode, messages: messages, maxTokens: maxTokens, stream: false)
-        let data = try await send(path: "v1/chat", method: "POST", contentType: "application/json",
-                                  body: JSONSerialization.data(withJSONObject: body), session: session)
-        return try parseChat(data, mode: mode)
+        try await Backends.current.chat(mode: mode, messages: messages, maxTokens: maxTokens, session: session)
     }
 
     static func chatBody(mode: Mode, messages: [[String: String]], maxTokens: Int?, stream: Bool) -> [String: Any] {
@@ -172,23 +184,16 @@ enum WorkerAPI {
     static func chatStream(mode: Mode, messages: [[String: String]], maxTokens: Int? = nil,
                            session: URLSession = .shared,
                            onUpdate: @MainActor (String) -> Void) async throws -> ChatStreamResult {
-        let token = try await AccountSession.shared.workerAccessToken()
-        let body = chatBody(mode: mode, messages: messages, maxTokens: maxTokens, stream: true)
-        let request = request(path: "v1/chat", method: "POST", contentType: "application/json",
-                              body: try JSONSerialization.data(withJSONObject: body), token: token)
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse else { throw WorkerError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            var data = Data()
-            for try await byte in bytes {
-                if data.count >= 4_096 { break }
-                data.append(byte)
-            }
-            throw WorkerError.from(status: http.statusCode, data: data,
-                                   retryAfter: http.value(forHTTPHeaderField: "Retry-After"))
-        }
+        try await Backends.current.chatStream(mode: mode, messages: messages, maxTokens: maxTokens,
+                                              session: session, onUpdate: onUpdate)
+    }
+
+    /// Reads server-sent events (Anthropic or chat-completion chunks) into one answer.
+    static func collectStream<Lines: AsyncSequence>(_ lines: Lines,
+                                                    onUpdate: @MainActor (String) -> Void) async throws -> ChatStreamResult
+        where Lines.Element == String {
         var collector = ChatStreamCollector()
-        for try await line in bytes.lines {
+        for try await line in lines {
             try Task.checkCancellation()
             guard line.hasPrefix("data:") else { continue }
             let payload = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
@@ -218,28 +223,9 @@ enum WorkerAPI {
     }
 
     /// `language`: an ISO-639-1 code from Settings → Dictation → I speak;
-    /// nil lets the service detect it (sent exactly as before). If a request
-    /// with a language comes back without a readable transcript, it is sent
-    /// once more without the language, the way Bibbles always sent it.
+    /// nil lets the service detect it.
     static func transcribe(wav: Data, language: String? = nil, session: URLSession = .shared) async throws -> String {
-        if let language {
-            do {
-                let data = try await send(path: "v1/transcribe", method: "POST", contentType: "audio/wav",
-                                          body: wav, session: session,
-                                          query: [URLQueryItem(name: "language", value: language)])
-                guard let text = transcript(from: data) else { throw WorkerError.invalidResponse }
-                return text
-            } catch WorkerError.badRequest {
-                // Only when the Worker refused the language setting itself
-                // (nothing was transcribed or charged) is the recording sent
-                // again without it. Any other failure is reported, so one
-                // recording is never paid for twice.
-            }
-        }
-        let data = try await send(path: "v1/transcribe", method: "POST", contentType: "audio/wav",
-                                  body: wav, session: session)
-        guard let text = transcript(from: data) else { throw WorkerError.invalidResponse }
-        return text
+        try await Backends.current.transcribe(wav: wav, language: language, session: session)
     }
 
     /// The transcript in the Worker's reply: Deepgram JSON
@@ -267,20 +253,14 @@ enum WorkerAPI {
         return nil
     }
 
-    /// Worker returns raw 16-bit mono PCM at 24 kHz; this is not a WAV body.
+    /// Raw 16-bit mono PCM at 24 kHz; this is not a WAV body.
     static func speechPCM(text: String, voice: String, session: URLSession = .shared) async throws -> Data {
-        let body = try JSONSerialization.data(withJSONObject: ["text": text, "voice": voice])
-        let data = try await send(path: "v1/tts", method: "POST", contentType: "application/json",
-                                  body: body, session: session)
-        guard data.count > 64 else { throw WorkerError.invalidResponse }
-        return data
+        try await Backends.current.speechPCM(text: text, voice: voice, session: session)
     }
 
     static func vision(body: [String: Any], tier: VisionTier,
                        session: URLSession = .shared) async throws -> Data {
-        let data = try visionPayload(body: body, tier: tier)
-        return try await send(path: "v1/vision", method: "POST", contentType: "application/json",
-                              body: data, session: session)
+        try await Backends.current.vision(body: body, tier: tier, session: session)
     }
 
     static func visionPayload(body: [String: Any], tier: VisionTier) throws -> Data {
@@ -293,15 +273,11 @@ enum WorkerAPI {
     }
 
     static func me(session: URLSession = .shared) async throws -> [String: Any] {
-        let data = try await send(path: "v1/me", method: "GET", session: session)
-        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            throw WorkerError.invalidResponse
-        }
-        return object
+        try await Backends.current.me(session: session)
     }
 
     static func deleteAccount(session: URLSession = .shared) async throws {
-        _ = try await send(path: "v1/account", method: "DELETE", session: session)
+        try await Backends.current.deleteAccount(session: session)
     }
 }
 
