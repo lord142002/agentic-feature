@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms of Service · Bibbles</title>
+<meta name="description" content="The terms for using Bibbles, including plans, billing, cancellations, refunds and acceptable use.">
+<link rel="canonical" href="https://www.bibbles.in/terms">
+<style>
+  :root {
+    --bg: #0b0c11; --panel: #12131a; --text: #eceef4; --muted: #a3a8b8; --line: #23252f;
+    --a1: #6b9eff; --a2: #a88cff; --a3: #fa94db; --a4: #ffd27f; --a5: #94f2bd;
+    --link: #b9a6ff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #fbfbfd; --panel: #ffffff; --text: #15161c; --muted: #5b6070; --line: #e6e7ee; --link: #5b3fd1; }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, sans-serif; }
+  a { color: var(--link); text-underline-offset: 3px; }
+  .bar { height: 3px; background: linear-gradient(90deg, var(--a1), var(--a2), var(--a3), var(--a4), var(--a5)); }
+  header.site { max-width: 820px; margin: 0 auto; padding: 22px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { font-weight: 700; font-size: 20px; color: var(--text); text-decoration: none; letter-spacing: -0.01em; }
+  nav.links a { color: var(--muted); text-decoration: none; margin-left: 18px; font-size: 14px; }
+  nav.links a[aria-current] { color: var(--text); }
+  main { max-width: 820px; margin: 0 auto; padding: 8px 20px 80px; }
+  h1 { font-size: clamp(32px, 6vw, 46px); line-height: 1.1; letter-spacing: -0.02em; margin: 24px 0 8px; }
+  .updated { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+  h2 { font-size: 22px; letter-spacing: -0.01em; margin: 48px 0 10px; padding-top: 8px; scroll-margin-top: 16px; }
+  h3 { font-size: 17px; margin: 24px 0 6px; }
+  ul { padding-left: 22px; } li { margin: 6px 0; }
+  .summary { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; margin: 8px 0 24px; position: relative; overflow: hidden; }
+  .summary::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: linear-gradient(90deg, var(--a1), var(--a2), var(--a3)); }
+  .summary h2 { margin: 0 0 8px; font-size: 18px; padding: 0; }
+  .summary ul { margin: 0; }
+  .toc { border: 1px solid var(--line); border-radius: 14px; padding: 14px 20px; margin: 0 0 8px; }
+  .toc strong { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .toc ol { margin: 8px 0 0; padding-left: 20px; columns: 2; column-gap: 28px; }
+  .toc li { margin: 4px 0; break-inside: avoid; font-size: 15px; }
+  @media (max-width: 600px) { .toc ol { columns: 1; } nav.links a { margin-left: 12px; } }
+  .caps { font-weight: 600; }
+  .muted { color: var(--muted); }
+  footer.site { border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  footer.site div { max-width: 820px; margin: 0 auto; padding: 24px 20px; display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; }
+  footer.site a { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="bar"></div>
+<header class="site">
+  <a class="brand" href="/">Bibbles</a>
+  <nav class="links"><a href="/pricing">Pricing</a><a href="/privacy">Privacy</a><a href="/terms" aria-current="page">Terms</a></nav>
+</header>
+
+<main>
+  <h1>Terms of Service</h1>
+  <p class="updated">Last updated: 13 October 2026</p>
+
+  <section class="summary" aria-label="Summary">
+    <h2>The short version</h2>
+    <ul>
+      <li>Bibbles is free to start on <strong>Alpha</strong>. <strong>Sigma</strong> and <strong>Omega</strong> are monthly subscriptions that renew automatically until you cancel.</li>
+      <li>You can cancel any time, and you keep your plan until the end of the month you've paid for.</li>
+      <li>AI answers can be wrong. Check anything important before relying on it.</li>
+      <li>Use Bibbles lawfully and don't misuse or overload the service.</li>
+    </ul>
+    <p style="margin:10px 0 0" class="muted">This summary is for convenience. The full terms below are what apply.</p>
+  </section>
+
+  <nav class="toc" aria-label="Contents">
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#agreement">Agreement</a></li>
+      <li><a href="#eligibility">Eligibility and accounts</a></li>
+      <li><a href="#service">The service</a></li>
+      <li><a href="#plans">Plans and usage limits</a></li>
+      <li><a href="#billing">Billing, renewal and cancellation</a></li>
+      <li><a href="#refunds">Refunds</a></li>
+      <li><a href="#acceptable">Acceptable use</a></li>
+      <li><a href="#content">Your content</a></li>
+      <li><a href="#ai">AI output and Mac actions</a></li>
+      <li><a href="#ip">Our intellectual property</a></li>
+      <li><a href="#third">Third-party services</a></li>
+      <li><a href="#termination">Suspension and termination</a></li>
+      <li><a href="#disclaimers">Disclaimers</a></li>
+      <li><a href="#liability">Limitation of liability</a></li>
+      <li><a href="#indemnity">Indemnity</a></li>
+      <li><a href="#law">Governing law and disputes</a></li>
+      <li><a href="#changes">Changes to these terms</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="agreement">1. Agreement</h2>
+  <p>These Terms of Service ("Terms") are an agreement between you and Mohit Singh, operating Bibbles from India ("Bibbles", "we", "us"). They cover your use of the Bibbles app for macOS, your Bibbles account, paid plans and <a href="https://www.bibbles.in">bibbles.in</a> (together, the "Service"). By creating an account, buying a plan or using the Service, you agree to these Terms and to our <a href="/privacy">Privacy Policy</a>. If you don't agree, please don't use the Service.</p>
+
+  <h2 id="eligibility">2. Eligibility and accounts</h2>
+  <ul>
+    <li>You must be at least 18 years old, or have permission from a parent or legal guardian where the law allows.</li>
+    <li>If you use Bibbles for an organisation, you confirm you're allowed to accept these Terms for it.</li>
+    <li>Give accurate account information and keep your sign-in secure. You're responsible for activity on your account. Tell us promptly if you think someone else has accessed it.</li>
+    <li>One person per account. Accounts and plans can't be shared, resold or transferred.</li>
+  </ul>
+
+  <h2 id="service">3. The service</h2>
+  <p>Bibbles helps you work on your Mac with voice and typed questions, dictation, spoken replies, web search and guidance about what's on your screen. Some features run on your Mac. Others send your request to our servers and to the AI services listed in our <a href="/privacy#providers">Privacy Policy</a>. You need an internet connection and a Bibbles account for most features, plus the macOS permissions each feature needs.</p>
+  <p>We keep improving Bibbles, so features may be added, changed or removed. Some features may be labelled beta or experimental. They may be less reliable and may change or end without notice. We aim to keep Bibbles available, but we don't guarantee uninterrupted service.</p>
+
+  <h2 id="plans">4. Plans and usage limits</h2>
+  <ul>
+    <li><strong>Alpha</strong> is free and includes a monthly starter allowance.</li>
+    <li><strong>Sigma</strong> and <strong>Omega</strong> are paid monthly plans with higher limits, as described in the app and on our <a href="/pricing">pricing page</a>.</li>
+    <li>Each plan has monthly limits on things such as asks, deep tasks, screen help, searches, dictation time and spoken answers. You can see your remaining usage in <strong>Settings → Account</strong>. Unused allowance doesn't carry over to the next month.</li>
+    <li>When you reach a limit, that feature pauses until your allowance resets or you upgrade. We may also briefly rate-limit very frequent requests to keep the Service stable for everyone.</li>
+    <li>We may change plan features, limits or prices. Price changes for an existing subscription take effect from your next renewal, and we'll tell you in advance.</li>
+  </ul>
+
+  <h2 id="billing">5. Billing, renewal and cancellation</h2>
+  <ul>
+    <li><strong>Payment processor.</strong> Purchases are processed by our payment partner, Dodo Payments, which acts as the merchant of record. They handle payment, invoices and applicable taxes, and their terms also apply to the payment.</li>
+    <li><strong>Prices.</strong> Prices are shown before you pay, in the currency offered at checkout. Taxes may be added depending on where you are.</li>
+    <li><strong>Automatic renewal.</strong> Paid plans renew automatically every month at the then-current price, using your saved payment method, until you cancel. For some cards (including Indian cards under RBI rules), you may receive a notice or approval request before a renewal or upgrade charge, and that charge may take some time to complete.</li>
+    <li><strong>Upgrades and plan changes.</strong> When you move from Sigma to Omega, the new plan applies once the payment for it goes through. The price difference for the rest of your billing month is calculated proportionally and charged then.</li>
+    <li><strong>Cancelling.</strong> You can cancel any time from <strong>Manage billing</strong> in the app's plans window. Your plan stays active until the end of the period you've paid for, and then your account returns to Alpha. You won't be charged again.</li>
+    <li><strong>Failed payments.</strong> If a renewal payment fails, we and Dodo Payments may retry it, and your paid plan may stay active for a short grace period. If payment still can't be collected, your account returns to Alpha.</li>
+  </ul>
+
+  <h2 id="refunds">6. Refunds</h2>
+  <p>Subscription fees cover access for the billing period and are generally non-refundable, including for unused time or allowance after you cancel. We will refund you:</p>
+  <ul>
+    <li>if you were charged in error, charged twice, or charged after cancelling;</li>
+    <li>if a serious technical fault on our side stops you from using the paid features and we can't fix it within a reasonable time; or</li>
+    <li>where the law requires a refund.</li>
+  </ul>
+  <p>To request a refund, email <a href="mailto:mohit@bibbles.in">mohit@bibbles.in</a> within 14 days of the charge, with the email on your account and the date of the charge. Approved refunds go back to your original payment method through Dodo Payments, usually within 5–10 business days. This doesn't affect any rights you have under consumer protection law.</p>
+
+  <h2 id="acceptable">7. Acceptable use</h2>
+  <p>You agree not to:</p>
+  <ul>
+    <li>use Bibbles for anything illegal, harmful, fraudulent, harassing or abusive, or to break anyone's rights, including privacy and intellectual property;</li>
+    <li>create content that sexualises minors, promotes violence or terrorism, or helps make weapons or dangerous substances;</li>
+    <li>capture, record or send other people's personal or confidential information without the right to do so;</li>
+    <li>try to bypass usage limits, payment, security or authentication, or access other users' data;</li>
+    <li>reverse engineer, scrape, overload or disrupt the Service, or use automated scripts to send large volumes of requests;</li>
+    <li>resell, sublicense or offer the Service to others, or use it to build a competing AI product;</li>
+    <li>break the usage policies of the AI providers that power Bibbles.</li>
+  </ul>
+  <p>We may limit, suspend or close accounts that break these rules (see <a href="#termination">section 12</a>).</p>
+
+  <h2 id="content">8. Your content</h2>
+  <p>"Your content" means what you send to Bibbles (messages, voice, screen images, selected text, attachments) and the answers you receive. You keep all rights you have in your content. You give us a limited permission to process it only as needed to provide, secure and support the Service, as described in our <a href="/privacy">Privacy Policy</a>. We don't use your content to train our own AI models.</p>
+  <p>You're responsible for your content and for having the right to share it with Bibbles, including anything visible on your screen. Answers may not be unique: other users may receive similar output.</p>
+
+  <h2 id="ai">9. AI output and Mac actions</h2>
+  <ul>
+    <li><strong>AI can be wrong.</strong> Answers, transcriptions, screen guidance and on-screen marks are generated automatically. They may be inaccurate, incomplete or out of date. Check anything important yourself.</li>
+    <li><strong>Not professional advice.</strong> Bibbles doesn't give medical, legal, financial, tax or other professional advice. For example, its explanations of charts or prices are not trading recommendations.</li>
+    <li><strong>Mac actions.</strong> Bibbles can do some things on your Mac when you ask, such as finding files, opening apps or websites, changing volume or dark mode, creating reminders, renaming files or typing text. It asks you to confirm before lasting changes and before anything you didn't clearly name. You are responsible for reviewing and approving these actions. We aren't responsible for results you approved.</li>
+  </ul>
+
+  <h2 id="ip">10. Our intellectual property</h2>
+  <p>The Service, including the Bibbles app, name, logo, design and software, belongs to us and our licensors. We give you a personal, non-exclusive, non-transferable, revocable licence to install and use the Bibbles app on Macs you own or control, under these Terms. You may not copy, modify, distribute, sell or rent the app, except where the law expressly allows it. If you send us feedback or ideas, we may use them without any obligation to you.</p>
+
+  <h2 id="third">11. Third-party services</h2>
+  <p>Bibbles relies on third-party services such as AI providers, hosting, sign-in providers (Google and Apple) and Dodo Payments. It may also show links to websites or search results we don't control. We aren't responsible for third-party services or websites. Your use of them may also be subject to their own terms.</p>
+
+  <h2 id="termination">12. Suspension and termination</h2>
+  <ul>
+    <li>You can stop using Bibbles at any time and delete your account in <strong>Settings → Account → Delete account</strong>. Cancel any paid plan first so it doesn't renew.</li>
+    <li>We may suspend or close your account if you seriously or repeatedly break these Terms, if the law requires it, or to protect users or the Service. Where reasonable, we'll warn you first and explain why.</li>
+    <li>If we close your paid account without you having broken these Terms, we'll refund the unused part of your current billing period.</li>
+    <li>Sections that by their nature should survive termination will continue to apply, including those on payment, content, disclaimers, liability and disputes.</li>
+  </ul>
+
+  <h2 id="disclaimers">13. Disclaimers</h2>
+  <p class="caps">To the extent the law allows, the Service is provided "as is" and "as available", without warranties of any kind, whether express or implied. This includes implied warranties of merchantability, fitness for a particular purpose, accuracy and non-infringement. We don't warrant that the Service will be uninterrupted, error-free or secure, or that AI output will be accurate.</p>
+
+  <h2 id="liability">14. Limitation of liability</h2>
+  <p class="caps">To the extent the law allows, Bibbles is not liable for any indirect, incidental, special, consequential or punitive damages. Nor is it liable for any loss of profits, revenue, data or goodwill arising from your use of the Service. Our total liability for all claims relating to the Service is limited to the greater of (a) the amounts you paid us in the 12 months before the claim, or (b) ₹1,000.</p>
+  <p>Nothing in these Terms limits liability that cannot be limited by law, such as liability for fraud, or for death or personal injury caused by negligence.</p>
+
+  <h2 id="indemnity">15. Indemnity</h2>
+  <p>You agree to defend and compensate us against claims, losses and costs (including reasonable legal fees) arising from your misuse of the Service, your content, or your breach of these Terms or of the law.</p>
+
+  <h2 id="law">16. Governing law and disputes</h2>
+  <p>These Terms are governed by the laws of India. Please contact us first. Most problems can be resolved quickly by email. If a dispute can't be resolved informally within 30 days, the courts of India will have exclusive jurisdiction. This doesn't remove any mandatory consumer rights you have under the laws of the country where you live.</p>
+
+  <h2 id="changes">17. Changes to these terms</h2>
+  <p>We may update these Terms from time to time. We'll change the date at the top. For significant changes, we'll let you know in the app or by email at least 14 days before they take effect. If you keep using the Service after changes take effect, you accept the updated Terms. If you don't agree, you can cancel and stop using the Service.</p>
+
+  <h2 id="contact">18. Contact</h2>
+  <p>Questions about these Terms, billing or refunds: <a href="mailto:mohit@bibbles.in">mohit@bibbles.in</a>.</p>
+  <p>If any part of these Terms is found unenforceable, the rest still applies. If we don't enforce a right, we haven't waived it. These Terms and our Privacy Policy are the whole agreement between you and us about the Service. You may not transfer these Terms without our consent. We may transfer them as part of a reorganisation or sale of the business.</p>
+</main>
+
+<footer class="site"><div>
+  <span>© 2026 Bibbles · bibbles.in</span>
+  <span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:mohit@bibbles.in">Contact</a></span>
+</div></footer>
+</body>
+</html>

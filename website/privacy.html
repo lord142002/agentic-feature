@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy · Bibbles</title>
+<meta name="description" content="How Bibbles handles your data: what stays on your Mac, what is sent to provide answers, and your choices.">
+<link rel="canonical" href="https://www.bibbles.in/privacy">
+<style>
+  :root {
+    --bg: #0b0c11; --panel: #12131a; --text: #eceef4; --muted: #a3a8b8; --line: #23252f;
+    --accent: #a88cff; --a1: #6b9eff; --a2: #a88cff; --a3: #fa94db; --a4: #ffd27f; --a5: #94f2bd;
+    --link: #b9a6ff; --code: #1a1c25;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg: #fbfbfd; --panel: #ffffff; --text: #15161c; --muted: #5b6070; --line: #e6e7ee;
+            --accent: #6a4fd8; --link: #5b3fd1; --code: #f1f1f6; }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, sans-serif; }
+  a { color: var(--link); text-underline-offset: 3px; }
+  .bar { height: 3px; background: linear-gradient(90deg, var(--a1), var(--a2), var(--a3), var(--a4), var(--a5)); }
+  header.site { max-width: 820px; margin: 0 auto; padding: 22px 20px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { font-weight: 700; font-size: 20px; color: var(--text); text-decoration: none; letter-spacing: -0.01em; }
+  nav.links a { color: var(--muted); text-decoration: none; margin-left: 18px; font-size: 14px; }
+  nav.links a[aria-current] { color: var(--text); }
+  main { max-width: 820px; margin: 0 auto; padding: 8px 20px 80px; }
+  h1 { font-size: clamp(32px, 6vw, 46px); line-height: 1.1; letter-spacing: -0.02em; margin: 24px 0 8px; }
+  .updated { color: var(--muted); font-size: 14px; margin: 0 0 28px; }
+  h2 { font-size: 22px; letter-spacing: -0.01em; margin: 48px 0 10px; padding-top: 8px; scroll-margin-top: 16px; }
+  h3 { font-size: 17px; margin: 26px 0 6px; }
+  p, li { color: var(--text); }
+  .muted { color: var(--muted); }
+  ul { padding-left: 22px; } li { margin: 6px 0; }
+  .summary { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px 22px; margin: 8px 0 24px; position: relative; overflow: hidden; }
+  .summary::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px; background: linear-gradient(90deg, var(--a1), var(--a2), var(--a3)); }
+  .summary h2 { margin: 0 0 8px; font-size: 18px; padding: 0; }
+  .summary ul { margin: 0; }
+  .toc { border: 1px solid var(--line); border-radius: 14px; padding: 14px 20px; margin: 0 0 8px; }
+  .toc strong { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .toc ol { margin: 8px 0 0; padding-left: 20px; columns: 2; column-gap: 28px; }
+  .toc li { margin: 4px 0; break-inside: avoid; font-size: 15px; }
+  @media (max-width: 600px) { .toc ol { columns: 1; } nav.links a { margin-left: 12px; } }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; background: var(--panel); }
+  tr:last-child td { border-bottom: 0; }
+  code { background: var(--code); padding: 1px 6px; border-radius: 6px; font-size: 14px; }
+  footer.site { border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+  footer.site div { max-width: 820px; margin: 0 auto; padding: 24px 20px; display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; }
+  footer.site a { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="bar"></div>
+<header class="site">
+  <a class="brand" href="/">Bibbles</a>
+  <nav class="links"><a href="/pricing">Pricing</a><a href="/privacy" aria-current="page">Privacy</a><a href="/terms">Terms</a></nav>
+</header>
+
+<main>
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated: 15 October 2026</p>
+
+  <section class="summary" aria-label="Summary">
+    <h2>The short version</h2>
+    <ul>
+      <li><strong>Your chat history stays on your Mac.</strong> We don't upload it when you sign in.</li>
+      <li><strong>We only send what's needed to answer you.</strong> That covers your question, your voice recording, and a screenshot or selected text <em>only when you ask about them</em>. These go through our servers to the AI services that produce the answer.</li>
+      <li><strong>We don't sell your data</strong>, show you ads, or use your content to train our own AI models.</li>
+      <li><strong>Payments are handled by Dodo Payments.</strong> We never see or store your full card number.</li>
+      <li><strong>You're in control.</strong> You can delete your account from inside the app at any time.</li>
+    </ul>
+  </section>
+
+  <nav class="toc" aria-label="Contents">
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#who">Who we are</a></li>
+      <li><a href="#collect">What we collect</a></li>
+      <li><a href="#local">What stays on your Mac</a></li>
+      <li><a href="#permissions">Mac permissions</a></li>
+      <li><a href="#use">How we use your data</a></li>
+      <li><a href="#providers">Services we use</a></li>
+      <li><a href="#retention">How long we keep data</a></li>
+      <li><a href="#rights">Your rights and choices</a></li>
+      <li><a href="#security">Security</a></li>
+      <li><a href="#transfers">International transfers</a></li>
+      <li><a href="#children">Children</a></li>
+      <li><a href="#changes">Changes to this policy</a></li>
+      <li><a href="#contact">Contact and grievances</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="who">1. Who we are</h2>
+  <p>Bibbles is a macOS companion app with push-to-talk, dictation, chat, spoken replies and on-screen guidance. It is operated by Mohit Singh, India ("Bibbles", "we", "us"), at <a href="https://www.bibbles.in">bibbles.in</a>. This policy explains how we handle personal data when you use the Bibbles app, your Bibbles account and this website.</p>
+  <p>We process your personal data as the data fiduciary (data controller) for the purposes described here, in line with India's Digital Personal Data Protection Act, 2023 and, where they apply to you, other privacy laws such as the GDPR.</p>
+
+  <h2 id="collect">2. What we collect</h2>
+  <h3>Account information</h3>
+  <ul>
+    <li>Your email address, and a password stored only in hashed form by our authentication provider.</li>
+    <li>If you sign in with Google or Apple: the basic profile details they share with us, usually your name and email address.</li>
+    <li>Your plan (Alpha, Sigma or Omega), subscription status and its start, renewal and end dates.</li>
+  </ul>
+  <h3>What you send when you use Bibbles</h3>
+  <ul>
+    <li><strong>Questions and messages</strong> you type or speak, and the recent messages of that conversation that give the answer context.</li>
+    <li><strong>Voice recordings.</strong> Audio is recorded only while you hold the push-to-talk or dictation keys. It is uploaded after you release them, so it can be turned into text.</li>
+    <li><strong>Screen images.</strong> These are sent only when you ask about your screen or circle an area. We send the relevant capture or crop. Bibbles' own windows are excluded.</li>
+    <li><strong>Selected text.</strong> When you ask Bibbles to explain or rewrite something you've selected, we send that text. Before it would send more (for example, a whole document or a screenshot to fix text), Bibbles shows you exactly what will be sent and asks first.</li>
+    <li><strong>Files you attach</strong> to a chat, such as text or searchable PDFs.</li>
+    <li><strong>Text to be spoken</strong>, if you turn on spoken answers.</li>
+    <li><strong>Web searches</strong> you ask for, and city names for weather questions.</li>
+  </ul>
+  <h3>Usage and technical information</h3>
+  <ul>
+    <li>Counts of what you've used (asks, deep tasks, screen help, dictation time and similar) to apply your plan's monthly limits.</li>
+    <li>Basic request records, such as time, feature used, success or error, and app version. We use these to run, secure and debug the service.</li>
+    <li>Standard network data such as IP address, which our hosting provider handles to deliver requests and protect against abuse.</li>
+  </ul>
+  <h3>Optional product analytics</h3>
+  <p>If you turn on <strong>Share product analytics</strong> in Settings → General → Privacy, Bibbles sends fixed screen names and feature-completion events to PostHog to help us understand which features are useful. Analytics is off by default and you can turn it off at any time. When signed in, these events use your internal Bibbles user ID, without your email address or name. They do not contain your questions, answers, recordings, screenshots, documents, passwords, tokens or payment details. Automatic interaction capture and session replay are disabled.</p>
+  <h3>Payment information</h3>
+  <p>When you buy a plan, checkout is handled by <strong>Dodo Payments</strong>. They collect your payment details and billing address. We receive only what we need to manage your subscription: a customer reference, the plan, the amount, the payment status and the dates. We never receive or store your full card number.</p>
+  <h3>Support</h3>
+  <p>If you email us, we keep the message and our reply so we can help you.</p>
+
+  <h2 id="local">3. What stays on your Mac</h2>
+  <p>A lot of Bibbles works locally, and that data is not sent to us:</p>
+  <ul>
+    <li>Your <strong>chat history</strong> and saved conversations.</li>
+    <li>Your <strong>technical vocabulary</strong>, approved <strong>corrections</strong> and dictation correction reports.</li>
+    <li>On-device <strong>text recognition (OCR)</strong> of screen captures, done by macOS.</li>
+    <li><strong>Doodles</strong> you draw on screen, and setup-tutorial captures (used once and discarded).</li>
+    <li>Your settings, and the local "minutes saved" estimate. No transcript is stored for that estimate.</li>
+  </ul>
+  <p>Signing in does not upload your local chat history. You can clear it at any time in <strong>Settings → Clear Chat History</strong>.</p>
+
+  <h2 id="permissions">4. Mac permissions</h2>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Permission</th><th>Why Bibbles asks</th></tr></thead>
+    <tbody>
+      <tr><td>Microphone</td><td>To record your voice while you hold the push-to-talk or dictation keys.</td></tr>
+      <tr><td>Screen Recording</td><td>To capture your screen, or the area you circle, when you ask about something on it.</td></tr>
+      <tr><td>Accessibility</td><td>To notice the Bibbles keyboard shortcuts, read text you've explicitly selected, and type dictation or written text into the app you're using.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Bibbles watches only for its own shortcut keys. It does not record your keystrokes or what you type elsewhere. You can turn off any permission in <strong>System Settings → Privacy &amp; Security</strong>; features that need it will then stop working.</p>
+
+  <h2 id="use">5. How we use your data</h2>
+  <ul>
+    <li><strong>To provide Bibbles:</strong> answering questions, transcribing speech, explaining your screen, searching the web, speaking answers and carrying out the Mac actions you ask for.</li>
+    <li><strong>To run your account and plan:</strong> sign-in, applying usage limits, billing, renewals and plan changes.</li>
+    <li><strong>To keep Bibbles safe and working:</strong> preventing abuse and fraud, fixing errors and measuring performance.</li>
+    <li><strong>To communicate with you</strong> about your account, payments, important changes and support requests.</li>
+    <li><strong>To meet legal obligations</strong>, such as tax and accounting records.</li>
+  </ul>
+  <p>We do <strong>not</strong> sell your personal data, use it for advertising, or use your content to train our own AI models.</p>
+  <p>We process your data to perform our contract with you (providing the service you signed up for) and on the basis of your consent, which you give when you use a feature or grant a permission. We may also rely on our legitimate interests in keeping the service secure, and on legal obligations. You can withdraw consent at any time; see <a href="#rights">your rights</a>.</p>
+
+  <h2 id="providers">6. Services we use</h2>
+  <p>To answer you, your requests pass through our servers to the providers below. Each one receives only what it needs for its part, under its own terms and privacy commitments.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Provider</th><th>What it does for Bibbles</th><th>Data it handles</th></tr></thead>
+    <tbody>
+      <tr><td>Cloudflare</td><td>Hosts our servers (Workers)</td><td>All requests in transit, IP address</td></tr>
+      <tr><td>Supabase</td><td>Accounts, sign-in, plans and usage records</td><td>Email, account and subscription data, usage counts</td></tr>
+      <tr><td>Anthropic (Claude)</td><td>Answers, writing, screen help and web search</td><td>Your messages, selected text, screen images, attachments</td></tr>
+      <tr><td>Deepgram</td><td>Speech-to-text for push-to-talk and dictation</td><td>Voice recordings</td></tr>
+      <tr><td>Google (Gemini), via OpenRouter</td><td>Spoken answers (text-to-speech)</td><td>The answer text to be spoken</td></tr>
+      <tr><td>OpenRouter</td><td>Routes some AI requests to the model that serves them</td><td>The content of those requests</td></tr>
+      <tr><td>Open-Meteo</td><td>Weather answers</td><td>The city name you asked about (sent directly from the app)</td></tr>
+      <tr><td>Dodo Payments</td><td>Checkout, subscriptions, invoices and taxes</td><td>Payment and billing details, email</td></tr>
+      <tr><td>Google / Apple</td><td>Optional "Sign in with" buttons</td><td>Sign-in information you choose to share</td></tr>
+      <tr><td>PostHog</td><td>Optional product analytics, only after you opt in</td><td>Fixed screen and feature events, internal user ID when signed in; no user content</td></tr>
+    </tbody>
+  </table></div>
+  <p>We use these providers' business and API services. Where they offer it, we use settings under which your content is not used to train their models. We may change providers to keep Bibbles working well, and we'll update this list when we do. We may also disclose data if the law requires it, to protect people's safety or our rights, or as part of a merger or sale of the business, in which case this policy will continue to protect it.</p>
+
+  <h2 id="retention">7. How long we keep data</h2>
+  <ul>
+    <li><strong>Account data:</strong> for as long as your account exists. It is deleted when you delete your account.</li>
+    <li><strong>Request content</strong> (messages, audio, screen images): processed to produce your answer, and not kept by Bibbles afterwards. Our providers may keep it briefly under their own policies, for example for safety and abuse monitoring.</li>
+    <li><strong>Usage counts and request records:</strong> up to 12 months, to apply limits, prevent abuse and fix problems.</li>
+    <li><strong>Billing and subscription records:</strong> for as long as tax and accounting laws require, even after you delete your account.</li>
+    <li><strong>Local data on your Mac:</strong> until you clear it or uninstall Bibbles.</li>
+  </ul>
+
+  <h2 id="rights">8. Your rights and choices</h2>
+  <p>Depending on where you live, you have the right to:</p>
+  <ul>
+    <li>access the personal data we hold about you, and get a summary of how it's used;</li>
+    <li>correct or update it;</li>
+    <li>delete it: use <strong>Settings → Account → Delete account</strong> in the app, or email us;</li>
+    <li>withdraw consent, or object to or restrict certain processing;</li>
+    <li>receive your data in a portable format, where applicable;</li>
+    <li>nominate someone to exercise your rights if you die or become incapacitated (India);</li>
+    <li>complain to a data protection authority, such as the Data Protection Board of India.</li>
+  </ul>
+  <p>To use any of these rights, email <a href="mailto:mohit@bibbles.in">mohit@bibbles.in</a>. We'll respond within 30 days, and we may need to confirm your identity first. Cancelling a paid plan is separate from deleting your account; see our <a href="/terms#billing">Terms</a>.</p>
+
+  <h2 id="security">9. Security</h2>
+  <p>We protect your data with encryption in transit (HTTPS), sign-in sessions stored in the macOS Keychain, access controls on our database, and no AI provider keys inside the app. No system is perfectly secure. If we learn of a breach that affects your personal data, we'll notify you and the authorities as the law requires.</p>
+
+  <h2 id="transfers">10. International transfers</h2>
+  <p>Our providers may process data in India, the United States, the European Union and other countries. When data leaves your country, we rely on providers' contractual and security commitments to protect it as this policy describes, and on the transfer rules of applicable law.</p>
+
+  <h2 id="children">11. Children</h2>
+  <p>Bibbles is not meant for children. You must be at least 18 years old to use it, or have the consent of a parent or legal guardian where the law allows. We don't knowingly collect data from children. If you believe a child has given us personal data, contact us and we'll delete it.</p>
+
+  <h2 id="changes">12. Changes to this policy</h2>
+  <p>We may update this policy as Bibbles changes. When we do, we'll change the date at the top. If a change is significant, we'll also let you know in the app or by email before it takes effect.</p>
+
+  <h2 id="contact">13. Contact and grievances</h2>
+  <p>Questions, requests or complaints about privacy: <a href="mailto:mohit@bibbles.in">mohit@bibbles.in</a>.<br>
+  Grievance officer: Mohit Singh, <a href="mailto:mohit@bibbles.in">mohit@bibbles.in</a>. We aim to resolve grievances within 30 days.</p>
+</main>
+
+<footer class="site"><div>
+  <span>© 2026 Bibbles · bibbles.in</span>
+  <span><a href="/privacy">Privacy</a> · <a href="/terms">Terms</a> · <a href="mailto:mohit@bibbles.in">Contact</a></span>
+</div></footer>
+</body>
+</html>

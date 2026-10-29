@@ -1,0 +1,28 @@
+name = "bibbles-billing"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Public, non-secret settings. Secrets are set with `wrangler secret put` (see README).
+[vars]
+DODO_ENV = "live"                 # live mode: needs the live API key + live webhook secret as Worker secrets
+FREE_PLAN_NAME = "alpha"
+SUPABASE_URL = "https://eoaybgiwtjshmfdoqxqx.supabase.co"
+SUPABASE_ANON_KEY = "sb_publishable_daO3QzOQITgAc-zSkmsGzg_68ZrF8ta"  # publishable, same as the app
+APP_RETURN_URL = "bibbles-auth://billing"
+# Also write the plan into profiles, which the main Worker (bibbles-api) reads for limits.
+PLAN_SYNC_TABLE = "profiles"
+PLAN_SYNC_COLUMN = "plan"
+PLAN_SYNC_USER_COLUMN = "id"
+PLAN_SYNC_EXPIRES_COLUMN = "plan_expires_at"
+
+# The three plans shown in the app's "Choose your plan" window, in order.
+# Prices are NOT set here: they are read live from each Dodo product.
+# Paste each paid plan's Dodo product ID (pdt_…) and edit the feature lines freely.
+PLANS = [
+  { id = "alpha", name = "Alpha", tagline = "Try Bibbles free", free = true, features = [
+      "Voice, typed chat and dictation", "Screen help", "Monthly starter allowance" ] },
+  { id = "sigma", name = "Sigma", tagline = "For everyday work", product_id = "pdt_0NpoRYsbAZHjI8K5Trztz", features = [
+      "Everything in Alpha", "More monthly asks", "Deep tasks" ] },
+  { id = "omega", name = "Omega", tagline = "For power users", product_id = "pdt_0NpoRqUvLa0azMp0sHxmI", highlight = true, features = [
+      "Everything in Sigma", "Highest monthly limits", "Most deep tasks" ] },
+]
