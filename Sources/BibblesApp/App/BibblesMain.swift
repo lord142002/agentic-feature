@@ -259,6 +259,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         configureInteractions()
         trackExternalApps()
         hotkeys.start()
+        #if BIBBLES_DEVELOPER
+        DeveloperKeychain.migrateLegacyRouterKey()
+        #endif
         let environment = ProcessInfo.processInfo.environment
         let isSelfTest = environment["BIBBLES_STT_SELF_TEST"] == "1"
             || environment["BIBBLES_SCREEN_SELF_TEST"] == "1"
@@ -685,8 +688,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             let keywords = addItem(to: developer, "Keyword improvements: \(HybridRouter.keywordImprovementsEnabled ? "On" : "Off")",
                                    #selector(toggleKeywordImprovements))
             keywords.state = HybridRouter.keywordImprovementsEnabled ? .on : .off
-            addItem(to: developer, RouterKeychain.hasKey ? "Router test key… (saved)" : "Router test key…",
-                    #selector(editRouterKey))
+            addItem(to: developer, "API Keys & Local Mode…", #selector(openDeveloperSettings))
             addItem(to: developer, DeveloperControls.shared.testRunning ? "Run Router Test Set (running…)" : "Run Router Test Set (\(RouterTestSet.cases.count))",
                     #selector(runRouterTestSet))
             menu.addItem(submenuItem("Developer", developer))
@@ -1049,36 +1051,15 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         var note = "AI Router (Haiku): \(HybridRouter.isEnabled ? "On" : "Off")"
         if HybridRouter.isEnabled {
             if !ToolGate.isEnabled { note += " — turn the Tool Gate on too" }
-            else if !RouterKeychain.hasKey { note += " — add a Router test key (keywords only until then)" }
+            else if !DeveloperKeychain.has(.anthropic) { note += " — add an Anthropic key in Settings → Developer (keywords only until then)" }
             RouterWarmUp.ifNeeded()
         }
         showDeveloperNote(note)
     }
 
-    @objc private func editRouterKey() {
-        NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "Router test key (developer only)"
-        alert.informativeText = "An Anthropic API key used only to test the AI router on this Mac. It's stored in your macOS Keychain, never in the app, and never sent anywhere except api.anthropic.com."
-        let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        field.placeholderString = RouterKeychain.hasKey ? "A key is saved. Paste a new one to replace it." : "sk-ant-…"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-        if RouterKeychain.hasKey { alert.addButton(withTitle: "Remove Key") }
-        alert.window.initialFirstResponder = field
-        switch alert.runModal() {
-        case .alertFirstButtonReturn:
-            let key = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !key.isEmpty else { return }
-            let saved = DeveloperControls.shared.saveRouterKey(key)
-            showDeveloperNote(saved ? "Router test key saved in Keychain" : "Couldn't save the key")
-        case .alertThirdButtonReturn:
-            DeveloperControls.shared.removeRouterKey()
-            showDeveloperNote("Router test key removed")
-        default:
-            break
-        }
+    /// Keys are pasted only on Settings → Developer (Paste & Save), never typed into an alert.
+    @objc private func openDeveloperSettings() {
+        settingsWindow.show(section: .developer)
     }
 
     @objc private func runRouterTestSet() {

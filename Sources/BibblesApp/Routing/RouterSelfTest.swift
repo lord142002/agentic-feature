@@ -46,8 +46,8 @@ enum RouterSelfTest {
         // The self-test never touches the real Keychain or the server (both
         // could wait forever: a Keychain prompt, or no sign-in).
         #if BIBBLES_DEVELOPER
-        RouterKeychain.testOverride = .some(nil)
-        defer { RouterKeychain.testOverride = nil }
+        DeveloperKeychain.testOverride = [:]
+        defer { DeveloperKeychain.testOverride = nil }
         #endif
         RouterClient.serverAllowed = false
         defer { RouterClient.serverAllowed = true }

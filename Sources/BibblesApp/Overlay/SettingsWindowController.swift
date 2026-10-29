@@ -1986,11 +1986,10 @@ private struct AboutPage: View {
 @MainActor
 private struct DeveloperPage: View {
     @ObservedObject private var controls = DeveloperControls.shared
-    @State private var keyDraft = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            PageHeader(title: "Developer", subtitle: "Testing controls for request routing. Not shown to customers.")
+            PageHeader(title: "Developer", subtitle: "Testing controls for routing, your own API keys, Local mode and agents. Developer builds only.")
             if let warning = controls.warning {
                 AccountNotice(message: warning, isError: true).padding(.bottom, 18)
             }
@@ -2008,25 +2007,12 @@ private struct DeveloperPage: View {
                           "On for everyone. When keywords can't decide, Claude Haiku labels the request (write, fix, screen, search…) through the Bibbles server. Sends only the words and on/off flags, never screenshots, files or selected text. Used at ≥ 0.75 confidence; otherwise, or after 1.5 s, keywords decide.",
                           isOn: controls.aiRouter, set: { controls.setAIRouter($0) })
             }
-            SectionLabel(text: "Router test key")
+            SectionLabel(text: "API keys (local testing)")
             Card {
-                SettingRow(title: "Anthropic key for router tests (optional)",
-                           detail: "Developer only, saved only in this Mac's Keychain. When set, this Mac calls Haiku directly with it (and the test set can run); without it the router uses the Bibbles server like every customer.") {
-                    StatusBadge(ready: controls.hasRouterKey, readyText: "Set", missingText: "Not set")
+                ForEach(Array(DeveloperKeySlot.allCases.enumerated()), id: \.element) { index, slot in
+                    if index > 0 { RowDivider() }
+                    keyRow(slot)
                 }
-                RowDivider()
-                HStack(spacing: 12) {
-                    SecureField(controls.hasRouterKey ? "Paste a new key to replace it" : "sk-ant-…", text: $keyDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit(saveKey)
-                    PillButton(title: "Save", prominent: true, action: saveKey)
-                        .disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if controls.hasRouterKey {
-                        PillButton(title: "Remove") { controls.removeRouterKey() }
-                    }
-                }
-                .padding(.horizontal, 22)
-                .padding(.vertical, 16)
             }
             SectionLabel(text: "Router test set")
             Card {
@@ -2066,9 +2052,41 @@ private struct DeveloperPage: View {
         .onAppear { controls.refresh() }
     }
 
-    private func saveKey() {
-        guard controls.saveRouterKey(keyDraft) else { return }
-        keyDraft = ""
+    /// One provider key: name, use, status (last 4 characters only) and
+    /// Paste & Save / Test / Remove. Keys are never typed or shown here.
+    private func keyRow(_ slot: DeveloperKeySlot) -> some View {
+        let isSet = controls.hasKey(slot)
+        let result = controls.keyTest[slot]
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(slot.title)
+                        .font(.system(size: 15.5, weight: .medium))
+                        .foregroundStyle(.white)
+                    Text(slot.usage)
+                        .font(.system(size: 13))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
+                StatusBadge(ready: isSet, readyText: controls.keyStatus[slot] ?? "Set ✓", missingText: "Not set")
+            }
+            HStack(spacing: 10) {
+                PillButton(title: "Paste & Save", prominent: !isSet, symbol: "doc.on.clipboard") { controls.pasteAndSave(slot) }
+                PillButton(title: controls.keyTesting.contains(slot) ? "Testing…" : "Test") { controls.testKey(slot) }
+                    .disabled(!isSet || controls.keyTesting.contains(slot))
+                if isSet {
+                    PillButton(title: "Remove") { controls.removeKey(slot) }
+                }
+                if let result {
+                    Text(result.text)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(result.isOK ? Color(red: 0.52, green: 0.88, blue: 0.72) : Color(red: 1, green: 0.65, blue: 0.59))
+                }
+            }
+        }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 16)
     }
 
     private func toggleRow(_ title: String, _ detail: String, isOn: Bool, set: @escaping @MainActor @Sendable (Bool) -> Void) -> some View {

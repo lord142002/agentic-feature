@@ -434,9 +434,10 @@ struct RouterClient {
     static var serverAllowed = true
 
     #if BIBBLES_DEVELOPER
-    /// The developer's own key (testing, router test set); nil without one.
+    /// The developer's own Anthropic key (Settings → Developer → API keys);
+    /// nil without one.
     static func developer() -> RouterClient? {
-        guard let key = RouterKeychain.read(), !key.isEmpty else { return nil }
+        guard let key = DeveloperKeychain.read(.anthropic), !key.isEmpty else { return nil }
         return RouterClient(key: key)
     }
     #endif
@@ -536,64 +537,6 @@ enum RouterWarmUp {
         last = Date()
         Task.detached(priority: .utility) { await client.warmUp() }
     }
-}
-
-// MARK: - Developer key (Keychain only)
-
-/// The developer's Anthropic key for router testing. Stored only in this
-/// Mac's Keychain; never in code, defaults, logs or the app bundle.
-enum RouterKeychain {
-    static let service = "com.bibbles.dev.router"
-    static let account = "anthropic-router-test-key"
-    private static var cached: String??
-    /// Self-test only: when set, the Keychain is never touched.
-    static var testOverride: String??
-
-    static func read() -> String? {
-        if let testOverride { return testOverride }
-        if let cached { return cached }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &item)
-        let value = status == errSecSuccess ? (item as? Data).flatMap { String(data: $0, encoding: .utf8) } : nil
-        cached = .some(value)
-        return value
-    }
-
-    @discardableResult
-    static func save(_ key: String) -> Bool {
-        delete()
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else { return false }
-        let attributes: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            kSecValueData as String: data
-        ]
-        let ok = SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
-        cached = .some(ok ? trimmed : nil)
-        return ok
-    }
-
-    static func delete() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
-        cached = .some(nil)
-    }
-
-    static var hasKey: Bool { read()?.isEmpty == false }
 }
 #endif
 

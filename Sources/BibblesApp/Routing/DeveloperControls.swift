@@ -14,7 +14,11 @@ final class DeveloperControls: ObservableObject {
     @Published private(set) var toolGate = ToolGate.isEnabled
     @Published private(set) var keywordImprovements = HybridRouter.keywordImprovementsEnabled
     @Published private(set) var aiRouter = HybridRouter.isEnabled
-    @Published private(set) var hasRouterKey = false
+    /// "Not set" / "Set ✓ ····abcd" for each provider key.
+    @Published private(set) var keyStatus: [DeveloperKeySlot: String] = [:]
+    /// The latest Test result for each key ("OK", "invalid key"…).
+    @Published private(set) var keyTest: [DeveloperKeySlot: DeveloperKeyTestResult] = [:]
+    @Published private(set) var keyTesting: Set<DeveloperKeySlot> = []
     @Published private(set) var recordingLog = false
     @Published private(set) var logCount = 0
     @Published private(set) var testRunning = false
@@ -32,7 +36,7 @@ final class DeveloperControls: ObservableObject {
         toolGate = ToolGate.isEnabled
         keywordImprovements = HybridRouter.keywordImprovementsEnabled
         aiRouter = HybridRouter.isEnabled
-        hasRouterKey = RouterKeychain.hasKey
+        keyStatus = Dictionary(uniqueKeysWithValues: DeveloperKeySlot.allCases.map { ($0, DeveloperKeychain.status($0)) })
         recordingLog = ToolGateLog.shared.isRecording
         logCount = ToolGateLog.shared.entries.count
     }
@@ -67,23 +71,40 @@ final class DeveloperControls: ObservableObject {
         return nil
     }
 
-    // MARK: Router test key (Keychain only)
+    var hasRouterKey: Bool { DeveloperKeychain.has(.anthropic) }
 
+    func hasKey(_ slot: DeveloperKeySlot) -> Bool { DeveloperKeychain.has(slot) }
+
+    // MARK: API keys (Keychain only)
+
+    /// Reads the clipboard, trims, saves to the Keychain, then clears the clipboard.
     @discardableResult
-    func saveRouterKey(_ key: String) -> Bool {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        let ok = RouterKeychain.save(trimmed)
-        show(ok ? "Router test key saved in Keychain" : "Couldn't save the key to Keychain", error: !ok)
+    func pasteAndSave(_ slot: DeveloperKeySlot) -> Bool {
+        let ok = DeveloperKeychain.pasteAndSave(slot)
+        keyTest[slot] = nil
+        show(ok ? "\(slot.title) key saved in Keychain (clipboard cleared)" : "Copy the \(slot.title) key first, then press Paste & Save",
+             error: !ok)
         refresh()
-        if ok { RouterWarmUp.ifNeeded() }
+        if ok, slot == .anthropic { RouterWarmUp.ifNeeded() }
         return ok
     }
 
-    func removeRouterKey() {
-        RouterKeychain.delete()
-        show("Router test key removed")
+    func removeKey(_ slot: DeveloperKeySlot) {
+        DeveloperKeychain.remove(slot)
+        keyTest[slot] = nil
+        show("\(slot.title) key removed")
         refresh()
+    }
+
+    /// One tiny request with the saved key.
+    func testKey(_ slot: DeveloperKeySlot) {
+        guard !keyTesting.contains(slot) else { return }
+        keyTesting.insert(slot)
+        Task { @MainActor in
+            let result = await DeveloperKeyTester.test(slot)
+            self.keyTesting.remove(slot)
+            self.keyTest[slot] = result
+        }
     }
 
     // MARK: Tool Gate log
@@ -114,8 +135,8 @@ final class DeveloperControls: ObservableObject {
     func runTestSet(onProgress: ((String) -> Void)? = nil) {
         guard !testRunning else { return }
         guard let client = RouterClient.developer() else {
-            show("Add a router test key first.", error: true)
-            onProgress?("Add a Router test key first (Developer → Router test key…)")
+            show("Add your Anthropic key in Settings → Developer first.", error: true)
+            onProgress?("Add your Anthropic key in Settings → Developer first")
             return
         }
         testRunning = true
