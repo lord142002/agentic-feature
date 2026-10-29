@@ -506,45 +506,56 @@ enum AgentPlanner {
     /// returns a plan `parse` accepts; each call is limited to 5 seconds.
     static func planned<Parsed>(system: String, user: String, models: [ModelChoice],
                                 schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan",
+                                strictSchema: [String: Any]? = nil,
                                 maxTokens: Int = maxOutputTokens, timeLimit: TimeInterval = timeout, image: Data? = nil,
                                 session: URLSession,
                                 parse: (String) -> Parsed?) async throws -> (AgentPlannerReply, Parsed) {
         guard LocalMode.isOn else { throw AgentError.needsLocalMode }
-        var lastProblem = "no reply"
+        // Each model's own problem, so the card says what really went wrong.
+        var problems: [String] = []
         for (index, model) in models.enumerated() {
+            let started = Date()
+            var problem: String
             do {
                 let reply = try await withTimeout(timeLimit) {
                     try await ask(model: model, system: system, user: user, backup: index > 0, session: session,
-                                  schema: schema, schemaName: schemaName, maxTokens: maxTokens, image: image)
+                                  schema: schema, schemaName: schemaName, strictSchema: strictSchema,
+                                  maxTokens: maxTokens, image: image)
                 }
                 if let parsed = parse(reply.text) { return (reply, parsed) }
-                lastProblem = "invalid plan"
+                problem = "its plan wasn't in the expected format"
             } catch is CancellationError {
                 throw CancellationError()
             } catch AgentError.needsLocalMode {
                 throw AgentError.needsLocalMode
             } catch let error as LocalBackendError {
-                lastProblem = error.localizedDescription
+                problem = error.localizedDescription
             } catch PlannerTimeout.timedOut {
-                lastProblem = "timed out"
+                problem = "no answer within \(Int(timeLimit)) s"
             } catch {
-                lastProblem = "network"
+                problem = "network problem"
             }
+            problems.append("\(model.name): \(problem)")
+            // Failed calls go in the cost log too (no tokens known).
+            LocalCostLog.shared.record(LocalCostLog.Entry(date: Date(), feature: schemaName.replacingOccurrences(of: "_", with: " ")
+                                                          + " FAILED: " + String(problem.prefix(60)), model: model.id,
+                                                          inputTokens: nil, outputTokens: nil, cost: nil,
+                                                          milliseconds: Int(Date().timeIntervalSince(started) * 1000)))
         }
-        throw AgentError.planFailed(lastProblem)
+        throw AgentError.planFailed(problems.isEmpty ? "no reply" : problems.joined(separator: "; "))
     }
 
     static func ask(model: ModelChoice, system: String, user: String, backup: Bool,
                     session: URLSession, schema: [String: Any] = AgentPlanParser.schema,
-                    schemaName: String = "agent_plan", maxTokens: Int = maxOutputTokens,
-                    image: Data? = nil) async throws -> AgentPlannerReply {
+                    schemaName: String = "agent_plan", strictSchema: [String: Any]? = nil,
+                    maxTokens: Int = maxOutputTokens, image: Data? = nil) async throws -> AgentPlannerReply {
         let started = Date()
         let request = try request(model: model, system: system, user: user, schema: schema, schemaName: schemaName,
-                                  maxTokens: maxTokens, image: image)
-        let data = try await LocalBackend.send(request, provider: model.provider == .anthropic ? "Anthropic" : "OpenRouter",
-                                               slot: model.provider.keySlot, session: session)
-        guard var text = ClaudeAPI.responseText(from: data) else {
-            throw LocalBackendError.invalidResponse(model.provider == .anthropic ? "Anthropic" : "OpenRouter")
+                                  strictSchema: strictSchema, maxTokens: maxTokens, image: image)
+        let provider = model.provider == .anthropic ? "Anthropic" : "OpenRouter"
+        let data = try await LocalBackend.send(request, provider: provider, slot: model.provider.keySlot, session: session)
+        guard var text = ClaudeAPI.responseText(from: data), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw emptyReplyProblem(data, provider: provider)
         }
         if prefills(model), !text.trimmingCharacters(in: .whitespaces).hasPrefix("{") { text = "{" + text }
         let usage = LocalCostLog.usage(in: data)
@@ -556,6 +567,22 @@ enum AgentPlanner {
         return reply
     }
 
+    /// Why a reply had no text: the model ran out of room (often while
+    /// thinking), declined, or something else.
+    static func emptyReplyProblem(_ data: Data, provider: String) -> LocalBackendError {
+        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let reason = (object?["stop_reason"] as? String)
+            ?? ((object?["choices"] as? [[String: Any]])?.first?["finish_reason"] as? String) ?? ""
+        switch reason {
+        case "max_tokens", "length":
+            return .provider(name: provider, status: 200, problem: "ran out of room before answering (it spent it thinking)")
+        case "refusal", "content_filter":
+            return .provider(name: provider, status: 200, problem: "declined to answer")
+        default:
+            return .invalidResponse(provider)
+        }
+    }
+
     /// Anthropic models without adaptive thinking get a `{` prefill; the
     /// others answer the JSON schema (OpenRouter) or are parsed forgivingly.
     static func prefills(_ model: ModelChoice) -> Bool {
@@ -564,6 +591,7 @@ enum AgentPlanner {
 
     static func request(model: ModelChoice, system: String, user: String,
                         schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan",
+                        strictSchema: [String: Any]? = nil,
                         maxTokens: Int = maxOutputTokens, image: Data? = nil) throws -> URLRequest {
         switch model.provider {
         case .openrouter:
@@ -582,10 +610,17 @@ enum AgentPlanner {
                 "max_tokens": maxTokens,
                 "provider": LocalBackend.privacy,
                 "reasoning": ["effort": "low"],
-                "response_format": ["type": "json_schema",
-                                    "json_schema": ["name": schemaName, "strict": false, "schema": schema]],
                 "usage": ["include": true]
             ]
+            if model.id.hasPrefix("openai/"), let strictSchema {
+                // OpenAI's strict mode: the reply must match the format exactly.
+                body["response_format"] = ["type": "json_schema",
+                                           "json_schema": ["name": schemaName, "strict": true, "schema": strictSchema]]
+            } else if !model.id.hasPrefix("google/") {
+                // Gemini rejects loosely defined formats, so it gets plain JSON instructions only.
+                body["response_format"] = ["type": "json_schema",
+                                           "json_schema": ["name": schemaName, "strict": false, "schema": schema]]
+            }
             if model.acceptsTemperature { body["temperature"] = 0 }
             return try LocalBackend.openRouterRequest(path: "chat/completions", json: body, key: LocalBackend.key(.openrouter))
         case .anthropic:
@@ -600,7 +635,8 @@ enum AgentPlanner {
             if prefills(model) { messages.append(["role": "assistant", "content": "{"]) }
             var body: [String: Any] = [
                 "model": model.id,
-                "max_tokens": maxTokens,
+                // Haiku 5.5 / Sonnet 5.5 may think first: thinking counts toward the limit, so give twice the room.
+                "max_tokens": model.acceptsTemperature ? maxTokens : maxTokens * 2,
                 "system": system,
                 "messages": messages
             ]

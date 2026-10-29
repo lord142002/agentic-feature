@@ -163,6 +163,61 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertEqual(parsed.dropped.map(\.index), [3, 6])
     }
 
+    // MARK: Plan format (Gmail "not a step")
+
+    func testSafeSlipsAreAcceptedAndSentencesExplained() {
+        let text = #"{"summary":"reply","done":false,"steps":["Click Reply",{"type":"click","x":640,"y":980,"label":"Reply"},{"action":"tap","coordinate":[100,200]},{"action":"hotkey","key":"cmd+l"},{"action":"type_text","value":"Please block my account."},{"action":"open_url","url":"https://example.com"},{"x":1,"y":2},{"action":"fly"}]}"#
+        let parsed = ScreenPlanParser.parse(text)
+        XCTAssertEqual(parsed.plan?.steps, [
+            .click(x: 0.64, y: 0.98, label: "Reply", final: false),
+            .click(x: 0.1, y: 0.2, label: "", final: false),
+            .key("cmd+l", final: false),
+            .type("Please block my account."),
+            .mac(AgentToolCall(name: "open_website", input: ["url": .string("https://example.com")]))
+        ])
+        XCTAssertEqual(parsed.dropped.map(\.index), [0, 6, 7])
+        XCTAssertTrue(parsed.dropped[0].reason.hasPrefix("the planner wrote a sentence, not a step"))
+        XCTAssertTrue(parsed.dropped[1].reason.hasPrefix("a step without an action (it had: x, y)"))
+        XCTAssertEqual(parsed.dropped[2].reason, "“fly” isn't something Bibbles can do")
+    }
+
+    func testStrictModeNullsAreIgnored() {
+        let text = #"{"summary":"","done":true,"steps":[{"action":"click","x":500,"y":500,"label":null,"final":null,"path":null,"target":null,"field":null,"value":null,"on":null,"option":null,"tool":null,"input":null,"folder":null,"name":null,"to_x":null,"to_y":null,"text":null,"keys":null,"ms":null,"notes":null}]}"#
+        XCTAssertEqual(ScreenPlanParser.parse(text).plan?.steps, [.click(x: 0.5, y: 0.5, label: "", final: false)])
+    }
+
+    func testStrictFormatListsEveryField() {
+        func check(_ object: [String: Any], path: String) {
+            if let properties = object["properties"] as? [String: Any] {
+                XCTAssertEqual(object["additionalProperties"] as? Bool, false, path)
+                XCTAssertEqual(Set(object["required"] as? [String] ?? []), Set(properties.keys), "\(path): every field required (null when unused)")
+                for (key, value) in properties { if let child = value as? [String: Any] { check(child, path: path + "." + key) } }
+            }
+            if let items = object["items"] as? [String: Any] { check(items, path: path + "[]") }
+            for option in object["anyOf"] as? [[String: Any]] ?? [] { check(option, path: path + "?") }
+        }
+        check(ScreenPlanParser.strictSchema, path: "plan")
+    }
+
+    func testPlannerAsksOpenAIStrictlyAndGeminiWithoutAFormat() throws {
+        DeveloperKeychain.testOverride = [.openrouter: "or"]
+        defer { DeveloperKeychain.testOverride = nil }
+        let gpt = StubURLProtocol.json(of: try AgentPlanner.request(model: ModelCatalog.gpt5Mini, system: "S", user: "U",
+                                                                    strictSchema: ScreenPlanParser.strictSchema))
+        let format = gpt["response_format"] as? [String: Any]
+        XCTAssertEqual((format?["json_schema"] as? [String: Any])?["strict"] as? Bool, true)
+        let gemini = StubURLProtocol.json(of: try AgentPlanner.request(model: ModelCatalog.gemini38Flash, system: "S", user: "U",
+                                                                       strictSchema: ScreenPlanParser.strictSchema))
+        XCTAssertNil(gemini["response_format"], "Gemini rejected the loose format, so it gets none")
+    }
+
+    func testEmptyRepliesSayWhy() {
+        let thinking = Data(#"{"content":[{"type":"thinking","thinking":"…"}],"stop_reason":"max_tokens"}"#.utf8)
+        XCTAssertEqual(AgentPlanner.emptyReplyProblem(thinking, provider: "Anthropic"),
+                       .provider(name: "Anthropic", status: 200, problem: "ran out of room before answering (it spent it thinking)"))
+        XCTAssertEqual(AgentPlanner.emptyReplyProblem(Data("{}".utf8), provider: "OpenRouter"), .invalidResponse("OpenRouter"))
+    }
+
     func testKeysAndShortcuts() {
         XCTAssertEqual(ScreenKeys.parse("return")?.code, 36)
         XCTAssertEqual(ScreenKeys.parse("cmd+L")?.flags, .maskCommand)

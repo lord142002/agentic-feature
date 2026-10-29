@@ -117,14 +117,26 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                     self.phase = .planning
                     let started = Date()
                     let models = [ModelCatalog.selected(.screenAgent), ModelCatalog.selected(.agentBackup)]
-                    let (reply, parsed) = try await AgentPlanner.planned(
-                        system: ScreenAgentPrompt.system(replyLanguage: ToolGate.replyLanguageRule),
-                        user: ScreenAgentPrompt.user(request: text, snapshot: snapshot.describe(details: details), history: self.history),
-                        models: models, schema: ScreenPlanParser.schema, schemaName: "screen_plan",
-                        maxTokens: 4_000, timeLimit: 45, image: capture?.jpeg,
-                        session: .shared) { raw -> ScreenParseResult? in
-                        let candidate = ScreenPlanParser.parse(raw)
-                        return candidate.isValid ? candidate : nil
+                    let userMessage = ScreenAgentPrompt.user(request: text, snapshot: snapshot.describe(details: details),
+                                                             history: self.history)
+                    func ask(_ message: String) async throws -> (AgentPlannerReply, ScreenParseResult) {
+                        try await AgentPlanner.planned(
+                            system: ScreenAgentPrompt.system(replyLanguage: ToolGate.replyLanguageRule),
+                            user: message, models: models, schema: ScreenPlanParser.schema, schemaName: "screen_plan",
+                            strictSchema: ScreenPlanParser.strictSchema,
+                            maxTokens: 4_000, timeLimit: 45, image: capture?.jpeg,
+                            session: .shared) { raw -> ScreenParseResult? in
+                            let candidate = ScreenPlanParser.parse(raw)
+                            return candidate.isValid ? candidate : nil
+                        }
+                    }
+                    var (reply, parsed) = try await ask(userMessage)
+                    // Steps that couldn't be read and nothing usable: ask once more, saying exactly why.
+                    if parsed.plan?.steps.isEmpty ?? true, !parsed.dropped.isEmpty {
+                        let reasons = parsed.dropped.prefix(4).map(\.reason).joined(separator: "; ")
+                        let retry = userMessage + "\n\nYour previous answer couldn't be used: \(reasons). "
+                            + "Answer again with every step as an object with an \"action\" field, exactly in the format described."
+                        (reply, parsed) = try await ask(retry)
                     }
                     try Task.checkCancellation()
                     guard let parsedPlan = parsed.plan else { throw AgentError.planFailed("invalid plan") }

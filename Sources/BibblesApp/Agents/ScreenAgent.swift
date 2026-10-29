@@ -119,6 +119,49 @@ enum ScreenPlanParser {
         ]
     }
 
+    /// The same format for OpenAI's strict mode: every field listed and
+    /// required, unused ones null, so the reply always matches exactly.
+    static var strictSchema: [String: Any] {
+        func nullable(_ type: String) -> [String: Any] { ["type": [type, "null"]] }
+        func nullableObject(_ properties: [String: Any]) -> [String: Any] {
+            ["anyOf": [["type": "object", "additionalProperties": false, "required": Array(properties.keys).sorted(),
+                        "properties": properties], ["type": "null"]]]
+        }
+        let point: [String: Any] = ["type": "object", "additionalProperties": false, "required": ["x", "y"],
+                                    "properties": ["x": ["type": "number"], "y": ["type": "number"]]]
+        let noteProperties: [String: Any] = [
+            "x": nullable("number"), "y": nullable("number"), "key": nullable("string"), "ms": ["type": "integer"],
+            "keys": ["type": ["array", "null"], "items": ["type": "string"]],
+            "points": ["type": ["array", "null"], "items": point],
+            "hold": nullable("integer"),
+            "to": ["anyOf": [point, ["type": "null"]]]
+        ]
+        let note: [String: Any] = ["type": "object", "additionalProperties": false, "required": Array(noteProperties.keys).sorted(),
+                                   "properties": noteProperties]
+        let input = nullableObject(["mode": nullable("string"), "action": nullable("string"), "level": nullable("integer"),
+                                    "steps": nullable("integer"), "name": nullable("string"), "url": nullable("string")])
+        let stepProperties: [String: Any] = [
+            "action": ["type": "string", "enum": actions],
+            "path": ["type": ["array", "null"], "items": ["type": "string"]],
+            "target": nullable("string"), "field": nullable("string"), "value": nullable("string"),
+            "on": nullable("boolean"), "option": nullable("string"),
+            "tool": ["type": ["string", "null"], "enum": (Array(macTools).sorted() as [Any]) + [NSNull()]],
+            "input": input,
+            "folder": nullable("string"), "name": nullable("string"),
+            "x": nullable("number"), "y": nullable("number"), "to_x": nullable("number"), "to_y": nullable("number"),
+            "label": nullable("string"), "final": nullable("boolean"),
+            "text": nullable("string"), "keys": nullable("string"), "ms": nullable("integer"),
+            "notes": ["type": ["array", "null"], "items": note]
+        ]
+        let step: [String: Any] = ["type": "object", "additionalProperties": false, "required": Array(stepProperties.keys).sorted(),
+                                   "properties": stepProperties]
+        return [
+            "type": "object", "additionalProperties": false, "required": ["done", "steps", "summary"],
+            "properties": ["summary": ["type": "string"], "done": ["type": "boolean"],
+                           "steps": ["type": "array", "items": step]]
+        ]
+    }
+
     static func parse(_ raw: String) -> ScreenParseResult {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !text.hasPrefix("{"), !text.hasPrefix("```"), text.hasPrefix("\"") { text = "{" + text }
@@ -131,16 +174,80 @@ enum ScreenPlanParser {
         var steps: [ScreenStep] = []
         var dropped: [AgentDroppedStep] = []
         for (index, value) in rawSteps.enumerated() {
-            if let item = value as? [String: Any], let step = step(from: item) {
+            if let item = value as? [String: Any], let step = step(from: normalized(item)) {
                 steps.append(step)
             } else {
-                let name = ((value as? [String: Any])?["action"] as? String) ?? ""
-                dropped.append(AgentDroppedStep(index: index, reason: name.isEmpty ? "not a step" : "“\(name.prefix(30))” is not allowed or incomplete"))
+                dropped.append(AgentDroppedStep(index: index, reason: problem(with: value)))
             }
         }
         let summary = (object["summary"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let done = (object["done"] as? Bool) ?? true
         return ScreenParseResult(plan: ScreenPlan(summary: String(summary.prefix(300)), steps: steps, done: done), dropped: dropped)
+    }
+
+    static let actions = ["menu", "press", "fill", "toggle", "choose", "mac", "save", "click", "type", "key", "play", "wait", "drag"]
+    /// Small, unambiguous slips a model makes, mapped to Bibbles' own names.
+    static let actionAliases = ["tap": "click", "left_click": "click", "mouse_click": "click", "double_click": "click",
+                                "type_text": "type", "input": "type", "write": "type", "keypress": "key", "press_key": "key",
+                                "hotkey": "key", "shortcut": "key", "sleep": "wait", "pause": "wait", "open_url": "mac",
+                                "select": "choose", "check": "toggle"]
+
+    /// Accepts safe variations: "type"/"kind"/"step" for "action", known aliases,
+    /// "coordinate": [x, y] or "point": {x, y}, "key" for "keys", "url" for open_url;
+    /// nulls (strict mode) are dropped.
+    static func normalized(_ raw: [String: Any]) -> [String: Any] {
+        var object = raw.filter { !($0.value is NSNull) }
+        var name = (object["action"] as? String) ?? ""
+        if name.isEmpty {
+            for key in ["type", "kind", "step", "name"] {
+                guard let candidate = (object[key] as? String)?.lowercased(),
+                      actions.contains(candidate) || actionAliases[candidate] != nil else { continue }
+                name = candidate
+                // "type" was the action's name here, not text to type.
+                if key == "type" { object.removeValue(forKey: "type") }
+                break
+            }
+        }
+        name = name.lowercased()
+        if name == "open_url", let url = object["url"] as? String {
+            object["tool"] = "open_website"
+            object["input"] = ["url": url]
+        }
+        name = actionAliases[name] ?? name
+        object["action"] = name
+        if object["x"] == nil, let pair = object["coordinate"] as? [Any] ?? object["coordinates"] as? [Any], pair.count == 2 {
+            object["x"] = pair[0]
+            object["y"] = pair[1]
+        }
+        if object["x"] == nil, let point = object["point"] as? [String: Any] ?? object["position"] as? [String: Any] {
+            object["x"] = point["x"]
+            object["y"] = point["y"]
+        }
+        if name == "key", object["keys"] == nil { object["keys"] = object["key"] ?? object["shortcut"] }
+        if name == "type", object["text"] == nil { object["text"] = object["value"] ?? object["content"] }
+        if name == "press", object["target"] == nil { object["target"] = object["label"] ?? object["button"] }
+        return object
+    }
+
+    /// Why a step couldn't be used, in plain words.
+    static func problem(with value: Any) -> String {
+        if let sentence = value as? String {
+            return "the planner wrote a sentence, not a step: “\(sentence.prefix(50))”"
+        }
+        guard let raw = value as? [String: Any] else { return "the planner's step was empty" }
+        let object = normalized(raw)
+        let name = (object["action"] as? String) ?? ""
+        if name.isEmpty {
+            let keys = raw.keys.sorted().prefix(5).joined(separator: ", ")
+            return "a step without an action (it had: \(keys.isEmpty ? "nothing" : keys))"
+        }
+        guard actions.contains(name) else { return "“\(name.prefix(30))” isn't something Bibbles can do" }
+        let needs: [String: String] = ["menu": "a menu path", "press": "a button title", "fill": "a field and a value",
+                                       "toggle": "a target and on/off", "choose": "a target and an option",
+                                       "mac": "an allowed Mac action", "click": "x and y from 0 to 1000", "type": "text",
+                                       "key": "an allowed key (never quit or force)", "play": "notes", "wait": "a time",
+                                       "drag": "start and end points"]
+        return "“\(name)” is missing \(needs[name] ?? "details")"
     }
 
     /// {"x","y"} or {"key"}, plus optional "keys"/"points" pressed together,
@@ -213,7 +320,7 @@ enum ScreenPlanParser {
             return .wait(min(5_000, max(100, (object["ms"] as? NSNumber)?.intValue ?? 1_000)))
         case "mac":
             guard let tool = text("tool"), macTools.contains(tool) else { return nil }
-            let input = (object["input"] as? [String: Any] ?? [:]).mapValues(AgentValue.init)
+            let input = (object["input"] as? [String: Any] ?? [:]).filter { !($0.value is NSNull) }.mapValues(AgentValue.init)
             return .mac(AgentToolCall(name: tool, input: input))
         default:
             return nil
