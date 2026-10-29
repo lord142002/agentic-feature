@@ -376,7 +376,7 @@ final class FilesAgentTests: XCTestCase {
             XCTFail("agent off: keywords decide, as today")
         }
         AgentSettings.testOverride = true
-        XCTAssertEqual(HybridRouter.keywordVerdict(for: text, flags: RouterFlags()), .unclear("files: router decides"))
+        XCTAssertEqual(HybridRouter.keywordVerdict(for: text, flags: RouterFlags()), .unclear("agents on: router decides"))
         // The router's answer is used.
         struct Agent: RouterTransport {
             func send(_ request: URLRequest) async throws -> (Data, Int) {

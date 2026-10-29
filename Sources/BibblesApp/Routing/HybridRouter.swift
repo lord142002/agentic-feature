@@ -104,6 +104,10 @@ enum HybridRouter {
     static let liveTimeout: TimeInterval = 1.0
     /// Through the Bibbles server there is one more hop, so a little longer.
     static let serverTimeout: TimeInterval = 1.5
+    #if BIBBLES_DEVELOPER
+    /// While an agent is on, the router decides every request.
+    static let agentsTimeout: TimeInterval = 2.5
+    #endif
 
     /// Developer toggle, default ON.
     static var isEnabled: Bool {
@@ -153,16 +157,14 @@ enum HybridRouter {
         let clauses = improvements ? clauseRoutes(for: text, flags: flags, intentRouter: intentRouter) : []
         let today = baselineRoute(for: text, flags: flags, intentRouter: intentRouter)
         #if BIBBLES_DEVELOPER
-        // With the Files agent on, file and Mac-action requests are not decided
-        // by keywords: the AI router picks file_action (one file), agent_files
-        // (many files) or command.
-        if AgentSettings.filesEnabled, [.fileAction, .command].contains(today) || intentRouter.isFileRequest(text) {
-            return .unclear("files: router decides")
-        }
-        // With the Screen agent on, requests to act on screen go to the AI router
-        // (agent_screen, form_fill, command or screen).
-        if AgentSettings.screenEnabled, [.formFill, .command].contains(today) || ScreenAgentDetector.mightBeAction(text) {
-            return .unclear("screen: router decides")
+        // With an agent on, the AI router decides every request (however it is
+        // phrased). Keywords keep only the trivial ones: the time and date,
+        // and greetings.
+        if AgentSettings.filesEnabled || AgentSettings.screenEnabled {
+            let gate = ToolGate.classify(text)
+            if gate.route == .localAnswer { return .keep(decision.strength) }
+            if gate.route == .simple, gate.reason == "greeting" { return .keep(.none) }
+            return .unclear("agents on: router decides")
         }
         #endif
 
@@ -299,6 +301,11 @@ enum HybridRouter {
                        useRouter: Bool = true,
                        improvements: Bool = keywordImprovementsEnabled) async -> RoutingDecision {
         let started = Date()
+        var timeout = timeout
+        #if BIBBLES_DEVELOPER
+        // Every request depends on the router while an agent is on: give it time.
+        if AgentSettings.filesEnabled || AgentSettings.screenEnabled { timeout = max(timeout, agentsTimeout) }
+        #endif
         let strength = intentRouter.decide(transcript: text, mode: .command).strength
         var decision: RoutingDecision
         switch keywordVerdict(for: text, flags: flags, intentRouter: intentRouter, improvements: improvements) {

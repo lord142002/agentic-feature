@@ -199,7 +199,12 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertEqual(HybridRouter.accept(RouterResult(route: .agentScreen, confidence: 0.95)), .agentScreen)
         XCTAssertTrue(RouterPrompt.system.contains("agent_screen"))
         XCTAssertEqual(HybridRouter.keywordVerdict(for: "Click Export and save it as a PDF", flags: RouterFlags()),
-                       .unclear("screen: router decides"))
+                       .unclear("agents on: router decides"))
+        // However it's phrased, the router decides; only trivial requests skip it.
+        XCTAssertEqual(HybridRouter.keywordVerdict(for: "hey bibbles if you don't mind can you please export this holi7 image to pdf",
+                                                   flags: RouterFlags()), .unclear("agents on: router decides"))
+        if case .unclear = HybridRouter.keywordVerdict(for: "thanks", flags: RouterFlags()) { XCTFail("greetings skip the router") }
+        if case .unclear = HybridRouter.keywordVerdict(for: "what time is it", flags: RouterFlags()) { XCTFail("the time is local") }
         AgentSettings.testOverride = true
         XCTAssertTrue(RouterPrompt.system.contains("agent_files") && RouterPrompt.system.contains("agent_screen"))
     }

@@ -916,25 +916,6 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     /// requests they can't decide. The user's words are never changed.
     private func dispatch(_ intent: BibblesIntent, transcript: String) {
         if intent != .dictate { stopWalkthrough() }
-        #if BIBBLES_DEVELOPER
-        // "AI Agents (Files)" on: organising many files goes to the Files agent.
-        if intent != .dictate, AgentSettings.filesEnabled, FilesAgentDetector.isRequest(transcript) {
-            ToolGateLog.shared.recordRouting(
-                RoutingDecision(source: .keyword, override: nil, keywordStrength: .strong, reason: "files agent keywords"),
-                text: transcript, finalRoute: "agent_files", tier: "agent")
-            startFilesAgent(transcript, layer: "keyword")
-            return
-        }
-        // "AI Agents (Screen)" on: "fill … with my details" is planned on the Mac (no AI).
-        if intent != .dictate, AgentSettings.screenEnabled,
-           ScreenAgentDetector.isDetailsFill(transcript) || ScreenAgentDetector.isDirectCommand(transcript) {
-            ToolGateLog.shared.recordRouting(
-                RoutingDecision(source: .keyword, override: nil, keywordStrength: .strong, reason: "screen agent command"),
-                text: transcript, finalRoute: "agent_screen", tier: "agent")
-            startScreenAgent(transcript, layer: "keyword")
-            return
-        }
-        #endif
         var intent = intent
         var hereWrite = false
         // Always on: "…write a mail to my HR here" is not a screen question.
