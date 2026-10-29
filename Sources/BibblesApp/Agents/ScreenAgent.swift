@@ -228,7 +228,7 @@ struct ScreenSnapshot {
 /// Accessibility helpers for the Screen agent.
 @MainActor
 enum ScreenAX {
-    static let controlRoles: Set<String> = ["AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXLink"]
+    nonisolated static let controlRoles: Set<String> = ["AXButton", "AXCheckBox", "AXRadioButton", "AXPopUpButton", "AXMenuButton", "AXLink"]
 
     nonisolated static func kind(_ role: String) -> String {
         switch role {
@@ -263,7 +263,7 @@ enum ScreenAX {
                 return String(text.prefix(80))
             }
         }
-        if let titleElement = element(element, kAXTitleUIElementAttribute),
+        if let titleElement = Self.element(element, kAXTitleUIElementAttribute),
            let text = string(titleElement, kAXValueAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
             return String(text.prefix(80))
         }
