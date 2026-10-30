@@ -67,7 +67,9 @@ enum RouterTestRunner {
     }
 
     static func row(for item: RouterTestCase, index: Int, client: RouterClient) async -> RouterTestRow {
-        let outcome = await client.classify(text: item.text, flags: item.flags, timeout: measurementTimeout)
+        // Jev Router hands each request to another model: allow it the live limit it gets in the app.
+        let limit = client.openRouterModel != nil ? max(measurementTimeout, HybridRouter.openRouterTimeout) : measurementTimeout
+        let outcome = await client.classify(text: item.text, flags: item.flags, timeout: limit)
         let local = localRoutes(for: item)
         let keywordRoute: HybridRoute?
         switch local.verdict {

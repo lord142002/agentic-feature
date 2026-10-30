@@ -2186,8 +2186,10 @@ private struct DeveloperPage: View {
         let choices = ModelCatalog.choices(for: feature)
         let selected = controls.models[feature] ?? ModelCatalog.defaultChoice(for: feature).id
         let current = choices.first { $0.id == selected } ?? choices[0]
-        return SettingRow(title: feature.title,
-                          detail: "\(current.id) · $\(String(format: "%g", current.inputPerMillion)) in / $\(String(format: "%g", current.outputPerMillion)) out per million tokens") {
+        let price = current.inputPerMillion < 0
+            ? "price of the model it picks (in the cost log)"
+            : "$\(String(format: "%g", current.inputPerMillion)) in / $\(String(format: "%g", current.outputPerMillion)) out per million tokens"
+        return SettingRow(title: feature.title, detail: "\(current.id) · \(price)") {
             Picker("", selection: Binding(get: { selected }, set: { controls.selectModel($0, for: feature) })) {
                 ForEach(choices) { choice in
                     Text(choice.name + (choice == ModelCatalog.defaultChoice(for: feature) ? " (default)" : "")).tag(choice.id)

@@ -32,6 +32,19 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(ModelCatalog.selected(.light, defaults: defaults), ModelCatalog.deepSeekFlash)
     }
 
+    func testJevRouterIsARouterOptionThroughOpenRouter() {
+        XCTAssertEqual(ModelCatalog.choices(for: .router).map(\.id), ["claude-haiku-4-5-20251001", "typesafe/jev-router"])
+        XCTAssertEqual(ModelCatalog.jevRouter.provider, .openrouter)
+        XCTAssertNil(ModelCatalog.estimatedCost(model: "typesafe/jev-router", inputTokens: 100, outputTokens: 10),
+                     "its price varies: the cost log uses OpenRouter's own figure")
+        let body = HybridRouter.openRouterBody(model: "typesafe/jev-router", text: "export this to pdf", flags: RouterFlags())
+        XCTAssertEqual(body["model"] as? String, "typesafe/jev-router")
+        XCTAssertNil(body["temperature"])
+        XCTAssertEqual((body["response_format"] as? [String: Any])?["type"] as? String, "json_object")
+        XCTAssertEqual((body["messages"] as? [[String: Any]])?.map { $0["role"] as? String }, ["system", "user"],
+                       "no pre-filled assistant answer on OpenRouter")
+    }
+
     func testOnlyPinnedIDs() {
         for model in ModelCatalog.all {
             XCTAssertFalse(model.id.contains("latest"), model.id)

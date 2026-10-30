@@ -63,6 +63,11 @@ enum ModelCatalog {
     static let gpt5Mini = ModelChoice(id: "openai/gpt-5-mini", provider: .openrouter,
                                       name: "GPT-5 mini", inputPerMillion: 0.25, outputPerMillion: 2.00,
                                       acceptsTemperature: false)
+    /// TypeSafe's Jev Router on OpenRouter (router option, Local mode only): Jev picks
+    /// a model for each request; the price is that model's (-1 = variable, from the reply).
+    static let jevRouter = ModelChoice(id: "typesafe/jev-router", provider: .openrouter,
+                                       name: "Jev Router (TypeSafe)", inputPerMillion: -1, outputPerMillion: -1,
+                                       acceptsTemperature: false)
     static let gemini38Flash = ModelChoice(id: "google/gemini-3.8-flash", provider: .openrouter,
                                            name: "Gemini 3.8 Flash", inputPerMillion: 0.825, outputPerMillion: 4.125)
 
@@ -83,7 +88,7 @@ enum ModelCatalog {
         switch feature {
         case .light: return [deepSeekFlash]
         case .deep: return [sonnet55]
-        case .router: return [haiku45]
+        case .router: return [haiku45, jevRouter]
         case .agentPlanner: return [gpt5Mini, haiku55, gemini38Flash, haiku45, sonnet55]
         case .agentBackup: return [haiku45, haiku55]
         // GPT-5 mini: cheapest reliable screen planner in testing (2026-10-29).

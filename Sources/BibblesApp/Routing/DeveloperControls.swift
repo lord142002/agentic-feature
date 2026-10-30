@@ -278,8 +278,9 @@ final class DeveloperControls: ObservableObject {
     func runTestSet(onProgress: ((String) -> Void)? = nil) {
         guard !testRunning else { return }
         guard let client = RouterClient.developer() else {
-            show("Add your Anthropic key in Settings → Developer first.", error: true)
-            onProgress?("Add your Anthropic key in Settings → Developer first")
+            let provider = LocalMode.isOn && ModelCatalog.selected(.router).provider == .openrouter ? "OpenRouter" : "Anthropic"
+            show("Add your \(provider) key in Settings → Developer first.", error: true)
+            onProgress?("Add your \(provider) key in Settings → Developer first")
             return
         }
         testRunning = true

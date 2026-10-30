@@ -539,6 +539,18 @@ final class LocalCostLog {
                      milliseconds: Int(Date().timeIntervalSince(started) * 1000)))
     }
 
+    /// A router call through OpenRouter: the model that really answered and
+    /// OpenRouter's own cost (usage.cost), since the router model's price varies.
+    func recordRouter(model: String, reply: Data, milliseconds: Int) {
+        let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
+        let answered = object?["model"] as? String
+        let usage = Self.usage(in: reply)
+        let cost = ((object?["usage"] as? [String: Any])?["cost"] as? NSNumber)?.doubleValue
+        let label = answered.map { $0 == model ? model : model + " → " + $0 } ?? model
+        record(Entry(date: Date(), feature: "router", model: label, inputTokens: usage.input, outputTokens: usage.output,
+                     cost: cost, milliseconds: milliseconds))
+    }
+
     /// After a stream: the usage it reported.
     func recordLastUsage(feature: String, model: String, started: Date) {
         let usage = WorkerAPI.lastUsage
