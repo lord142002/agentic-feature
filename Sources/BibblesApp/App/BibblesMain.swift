@@ -57,6 +57,11 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             Diagnostics.log("speak_flag", ["to": shouldSpeakNextAnswer, "by": callers.joined(separator: "<")])
         }
     }
+    /// An answer card waiting for its voice to start, and which speech it waits for.
+    private var heldAnswer: (show: () -> Void, voice: UUID)?
+    private var heldAnswerTimeout: Task<Void, Never>?
+    /// The speech whose wait already timed out: the rest of that answer shows at once.
+    private var stoppedWaitingFor: UUID?
     private var voiceRepliesEnabled: Bool {
         get { (UserDefaults.standard.object(forKey: "bibbles.voiceRepliesEnabled") as? Bool) ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "bibbles.voiceRepliesEnabled") }
@@ -368,6 +373,8 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         if notchHistoryEnabled {
             notchPill.show()
         }
+        // A spoken answer's card waits for its voice (see showInSyncWithVoice).
+        voiceReply.onSpeechStarted = { [weak self] in self?.releaseHeldAnswer() }
         chatStore.onAssistantReply = { [weak self] response, sources in
             guard let self else { return }
             let display = sources.isEmpty ? response : response + "\n\nSources:\n" + sources.map {
@@ -405,18 +412,24 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
                 }
             }
             guard !self.chatPanel.isVisible else { return }
-            self.interaction.transition(to: .answer(display))
-            self.interaction.modelLabel = ClaudeAPI.answeredByLabel() ?? self.interaction.modelLabel
-            self.interaction.setActions()
-            self.overlay.showNearCursor()
+            self.showInSyncWithVoice { [weak self] in
+                guard let self else { return }
+                self.interaction.transition(to: .answer(display))
+                self.interaction.modelLabel = ClaudeAPI.answeredByLabel() ?? self.interaction.modelLabel
+                self.interaction.setActions()
+                self.overlay.showNearCursor()
+            }
         }
         chatStore.onAssistantUpdate = { [weak self] response in
             guard let self else { return }
             if self.shouldSpeakNextAnswer { self.voiceReply.accept(response, final: false) }
             guard !self.chatPanel.isVisible else { return }
-            self.interaction.transition(to: .answer(response))
-            self.interaction.setActions(cancel: true)
-            self.overlay.refreshVisibleContent()
+            self.showInSyncWithVoice { [weak self] in
+                guard let self else { return }
+                self.interaction.transition(to: .answer(response))
+                self.interaction.setActions(cancel: true)
+                self.overlay.refreshVisibleContent()
+            }
         }
         chatStore.onNeedsScreen = { [weak self] question in
             guard let self else { return }
@@ -1114,10 +1127,13 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             if let answer = LocalQuickAnswer.answer(for: transcript) {
                 ToolGateLog.shared.recordLocal(route: .localAnswer, text: transcript, started: localStarted)
                 chatStore.recordExchange(userText: transcript, assistantText: answer)
-                interaction.transition(to: .answer(answer))
-                interaction.setActions()
                 speakLocalAnswerIfNeeded(answer)
-                overlay.showNearCursor()
+                showInSyncWithVoice { [weak self] in
+                    guard let self else { return }
+                    self.interaction.transition(to: .answer(answer))
+                    self.interaction.setActions()
+                    self.overlay.showNearCursor()
+                }
                 return
             }
         case .dictate, .search:
@@ -1659,9 +1675,12 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
                 } else {
                     speakLocalAnswerIfNeeded(answer.answer)
                     chatStore.recordExchange(userText: question, assistantText: answer.answer)
-                    interaction.transition(to: .answer(shownAnswer))
-                    interaction.modelLabel = ClaudeAPI.answeredByLabel() ?? ClaudeAPI.taskLabel(for: answer.model)
-                    overlay.showNearCursor(avoiding: targetHighlight.visibleBounds)
+                    showInSyncWithVoice { [weak self] in
+                        guard let self else { return }
+                        self.interaction.transition(to: .answer(shownAnswer))
+                        self.interaction.modelLabel = ClaudeAPI.answeredByLabel() ?? ClaudeAPI.taskLabel(for: answer.model)
+                        self.overlay.showNearCursor(avoiding: self.targetHighlight.visibleBounds)
+                    }
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -2124,6 +2143,38 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         guard shouldSpeakNextAnswer, voiceRepliesEnabled, !thinkingCuePlayed else { return }
         thinkingCuePlayed = true
         voiceReply.playThinkingCue()
+    }
+
+    /// A spoken answer: show the card when its voice starts, so text and voice
+    /// begin together. Not spoken (typed, voice off): show it now. If the
+    /// voice fails or is slow, the text shows after 2.5 s anyway; Escape or a
+    /// new question (voice stopped) drops a held answer.
+    private func showInSyncWithVoice(_ show: @escaping () -> Void) {
+        guard voiceReply.isActive, !voiceReply.hasStartedCurrent, stoppedWaitingFor != voiceReply.generationID else {
+            heldAnswer = nil
+            heldAnswerTimeout?.cancel()
+            heldAnswerTimeout = nil
+            show()
+            return
+        }
+        // The latest version of the answer wins (streamed updates).
+        heldAnswer = (show, voiceReply.generationID)
+        guard heldAnswerTimeout == nil else { return }
+        heldAnswerTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.stoppedWaitingFor = self.voiceReply.generationID
+            self.releaseHeldAnswer()
+        }
+    }
+
+    private func releaseHeldAnswer() {
+        heldAnswerTimeout?.cancel()
+        heldAnswerTimeout = nil
+        guard let held = heldAnswer else { return }
+        heldAnswer = nil
+        guard held.voice == voiceReply.generationID else { return }
+        held.show()
     }
 
     private func speakLocalAnswerIfNeeded(_ answer: String) {

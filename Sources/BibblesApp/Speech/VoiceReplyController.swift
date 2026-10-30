@@ -34,6 +34,20 @@ extension AVAudioPlayer: VoicePlayback {}
 final class VoiceReplyController: ObservableObject {
     @Published private(set) var isActive = false
     @Published private(set) var isPlaying = false
+    /// Runs once per answer, the moment its first audio starts playing (the
+    /// answer card waits for it, so text and voice start together).
+    var onSpeechStarted: (() -> Void)?
+    private var startedGeneration: UUID?
+    /// Changes whenever speech stops or a new answer starts.
+    var generationID: UUID { generation }
+    /// The current answer's voice has started.
+    var hasStartedCurrent: Bool { startedGeneration == generation }
+
+    private func markStarted(_ id: UUID) {
+        guard id == generation, startedGeneration != id else { return }
+        startedGeneration = id
+        onSpeechStarted?()
+    }
     @Published private(set) var errorMessage: String?
     /// How many pieces are generated ahead of the one playing.
     static let prefetchAhead = 1
@@ -185,6 +199,7 @@ final class VoiceReplyController: ObservableObject {
                     playback.prepareToPlay()
                     try await self.waitForCue(generation: id)
                     guard playback.play() else { throw VoiceReplyError.invalidAudio("Bibbles") }
+                    self.markStarted(id)
                     // Each step's drawing appears when the voice reaches it.
                     var pendingMarks = pieces[index].marks[...]
                     @MainActor func fireReached() {
@@ -455,6 +470,7 @@ final class VoiceReplyController: ObservableObject {
                     playback.prepareToPlay()
                     try await self.waitForCue(generation: id)
                     guard playback.play() else { throw VoiceReplyError.invalidAudio("Bibbles") }
+                    self.markStarted(id)
                     self.player = playback
                     self.isPlaying = true
                     while playback.isPlaying, self.generation == id, !Task.isCancelled {
