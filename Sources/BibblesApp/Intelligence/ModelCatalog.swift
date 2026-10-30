@@ -74,6 +74,10 @@ enum ModelCatalog {
     static let jevRouter = ModelChoice(id: "typesafe/jev-router", provider: .openrouter,
                                        name: "Jev Router (TypeSafe)", inputPerMillion: -1, outputPerMillion: -1,
                                        acceptsTemperature: false)
+    /// Deep task option (OpenRouter): same price as Sonnet 5.5; thinks by default, no temperature.
+    static let gpt61Sol = ModelChoice(id: "openai/gpt-6.1-sol", provider: .openrouter,
+                                      name: "GPT-6.1 Sol", inputPerMillion: 2.00, outputPerMillion: 10.00,
+                                      acceptsTemperature: false)
     static let gemini38Flash = ModelChoice(id: "google/gemini-3.8-flash", provider: .openrouter,
                                            name: "Gemini 3.8 Flash", inputPerMillion: 0.825, outputPerMillion: 4.125)
 
@@ -86,14 +90,14 @@ enum ModelCatalog {
     static let textToSpeechOutputPerMillion = 6.00
     static let deepgramModel = "nova-3"
 
-    static let all: [ModelChoice] = [deepSeekFlash, haiku45, haiku55, sonnet55, gpt5Mini, gemini38Flash, jev]
+    static let all: [ModelChoice] = [deepSeekFlash, haiku45, haiku55, sonnet55, gpt5Mini, gemini38Flash, jev, gpt61Sol]
 
     // MARK: Choices
 
     static func choices(for feature: ModelFeature) -> [ModelChoice] {
         switch feature {
         case .light: return [deepSeekFlash]
-        case .deep: return [sonnet55]
+        case .deep: return [sonnet55, gpt61Sol]
         case .router: return [haiku45, jev, jevRouter]
         case .agentPlanner: return [gpt5Mini, haiku55, gemini38Flash, haiku45, sonnet55]
         case .agentBackup: return [haiku45, haiku55]

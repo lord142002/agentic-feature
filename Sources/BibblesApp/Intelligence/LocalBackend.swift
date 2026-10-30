@@ -83,6 +83,16 @@ struct LocalBackend: Backend {
     func chat(mode: WorkerAPI.Mode, messages: [[String: String]], maxTokens: Int?,
               session: URLSession) async throws -> String {
         let started = Date()
+        if mode == .deep, ModelCatalog.selected(.deep).provider == .openrouter {
+            // An OpenRouter deep model (GPT-6.1 Sol): the OpenRouter key, chat-completion format.
+            let model = ModelCatalog.selected(.deep).id
+            let request = try Self.openRouterChatRequest(model: model, messages: Self.chatMessages(messages),
+                                                         maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: false,
+                                                         search: false, key: Self.key(.openrouter))
+            let data = try await Self.send(request, provider: "OpenRouter", slot: .openrouter, session: session)
+            LocalCostLog.shared.record(feature: "chat deep", model: model, reply: data, started: started)
+            return try WorkerAPI.parseChat(data, mode: mode)
+        }
         if mode == .deep {
             let model = ModelCatalog.selected(.deep).id
             let body = Self.anthropicBody(model: model, messages: messages,
@@ -115,6 +125,16 @@ struct LocalBackend: Backend {
     func chatStream(mode: WorkerAPI.Mode, messages: [[String: String]], maxTokens: Int?,
                     session: URLSession, onUpdate: @MainActor (String) -> Void) async throws -> ChatStreamResult {
         let started = Date()
+        if mode == .deep, ModelCatalog.selected(.deep).provider == .openrouter {
+            let model = ModelCatalog.selected(.deep).id
+            let request = try Self.openRouterChatRequest(model: model, messages: Self.chatMessages(messages),
+                                                         maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: true,
+                                                         search: false, key: Self.key(.openrouter))
+            let result = try await Self.stream(request, provider: "OpenRouter", slot: .openrouter, session: session,
+                                               onUpdate: onUpdate)
+            LocalCostLog.shared.recordLastUsage(feature: "chat deep", model: model, started: started)
+            return result
+        }
         if mode == .deep {
             let model = ModelCatalog.selected(.deep).id
             let body = Self.anthropicBody(model: model, messages: messages,
@@ -158,6 +178,16 @@ struct LocalBackend: Backend {
         request.removeValue(forKey: "model")
         request.removeValue(forKey: "tier")
         try Self.checkVisionLimits(request)
+        if tier == .deep, ModelCatalog.selected(.deep).provider == .openrouter {
+            let model = ModelCatalog.selected(.deep).id
+            var openRouter = Self.openRouterVisionBody(request, model: model, cap: Self.deepMaxTokens)
+            openRouter["provider"] = Self.privacy
+            let data = try await Self.send(Self.openRouterRequest(path: "chat/completions", json: openRouter,
+                                                                  key: Self.key(.openrouter)),
+                                           provider: "OpenRouter", slot: .openrouter, session: session)
+            LocalCostLog.shared.record(feature: "vision deep", model: model, reply: data, started: started)
+            return data
+        }
         if tier == .deep {
             let model = ModelCatalog.selected(.deep).id
             let anthropic = Self.anthropicVisionBody(request, model: model, cap: Self.deepMaxTokens)
@@ -204,7 +234,7 @@ struct LocalBackend: Backend {
     }
 
     /// The same request in chat-completion form: image blocks become data URLs.
-    static func openRouterVisionBody(_ body: [String: Any], model: String) -> [String: Any] {
+    static func openRouterVisionBody(_ body: [String: Any], model: String, cap limit: Int = lightMaxTokens) -> [String: Any] {
         var messages: [[String: Any]] = []
         if let system = body["system"] as? String, !system.isEmpty {
             messages.append(["role": "system", "content": system])
@@ -232,9 +262,11 @@ struct LocalBackend: Backend {
         var result: [String: Any] = [
             "model": model,
             "messages": messages,
-            "max_tokens": cap(body["max_tokens"] as? Int, lightMaxTokens)
+            "max_tokens": cap(body["max_tokens"] as? Int, limit)
         ]
-        if let temperature = body["temperature"] { result["temperature"] = temperature }
+        if let temperature = body["temperature"], ModelCatalog.choice(id: model)?.acceptsTemperature != false {
+            result["temperature"] = temperature
+        }
         return result
     }
 

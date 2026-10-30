@@ -71,6 +71,18 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertNil(HybridRouter.parseDecision(Data(#"{"answers":{"route":{"choice":"fly"}}}"#.utf8)))
     }
 
+    func testGPT61SolIsADeepOptionThroughOpenRouter() {
+        XCTAssertEqual(ModelCatalog.choices(for: .deep).map(\.id), ["claude-sonnet-5-5", "openai/gpt-6.1-sol"])
+        XCTAssertEqual(ModelCatalog.selected(.deep, defaults: defaults).id, "claude-sonnet-5-5", "Sonnet 5.5 stays the default")
+        XCTAssertEqual(ModelCatalog.gpt61Sol.provider, .openrouter)
+        XCTAssertFalse(ModelCatalog.gpt61Sol.acceptsTemperature)
+        let vision = LocalBackend.openRouterVisionBody(["temperature": 0.2, "max_tokens": 50_000,
+                                                        "messages": [["role": "user", "content": "hi"]]],
+                                                       model: "openai/gpt-6.1-sol", cap: LocalBackend.deepMaxTokens)
+        XCTAssertNil(vision["temperature"], "GPT-6.1 Sol takes no temperature")
+        XCTAssertEqual(vision["max_tokens"] as? Int, LocalBackend.deepMaxTokens)
+    }
+
     func testOnlyPinnedIDs() {
         for model in ModelCatalog.all {
             XCTAssertFalse(model.id.contains("latest"), model.id)

@@ -15,6 +15,8 @@ Prices are US dollars per million tokens (input / output) unless noted.
 | Deep chat, deep vision | Claude Sonnet 5.5 | `claude-sonnet-5-5` | Anthropic | $2.00 / $10.00 |
 | Agent planner and screen agent (default) | GPT-5 mini | `openai/gpt-5-mini` | OpenRouter | $0.25 / $2.00 |
 | Agent planner / backup option | Claude Haiku 5.5 | `claude-haiku-5-5` | Anthropic | $0.10 / $0.50 (prompts up to 100K tokens) |
+| Deep chat, deep vision (option) | GPT-6.1 Sol | `openai/gpt-6.1-sol` | OpenRouter | $2.00 / $10.00 (checked 2026-10-30) |
+| AI router option | Jev 1.14 (TypeSafe) | `typesafe/jev-1.14` | OpenRouter (Decisions API) | $0.042 / $0 (checked 2026-10-30) |
 | Agent planner and screen agent option | Gemini 3.8 Flash | `google/gemini-3.8-flash` | OpenRouter | $0.825 / $4.125 |
 | Speech to text | Nemotron 3.5 ASR (multilingual) | `nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b` | OpenRouter | $0.00000333 per unit (listed `prompt` price) |
 | Speech to text backup | Deepgram Nova-3 | `nova-3` | Deepgram | Deepgram's own pricing |
