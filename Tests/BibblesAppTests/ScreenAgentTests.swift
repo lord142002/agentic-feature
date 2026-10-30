@@ -472,5 +472,121 @@ final class ScreenAgentTests: XCTestCase {
         AgentSettings.testOverride = true
         XCTAssertTrue(RouterPrompt.system.contains("agent_files") && RouterPrompt.system.contains("agent_screen"))
     }
+
+    // MARK: Scroll, other apps, files, quick plans, voice
+
+    @MainActor
+    func testParsesNewSteps() {
+        let text = #"{"summary":"x","done":false,"steps":[{"action":"scroll","direction":"down","amount":4},{"action":"scroll_up"},{"action":"remember","text":"Total: ₹4,250"},{"action":"attach","name":"resume","folder":"Downloads"},{"action":"open_file","file":"holi7"},{"action":"switch_app","app":"Mail"},{"action":"scroll","direction":"sideways"}]}"#
+        let parsed = ScreenPlanParser.parse(text)
+        XCTAssertEqual(parsed.plan?.steps, [
+            .scroll(direction: "down", amount: 4, x: nil, y: nil),
+            .scroll(direction: "up", amount: 3, x: nil, y: nil),
+            .remember("Total: ₹4,250"),
+            .attach(name: "resume", folder: "Downloads"),
+            .openFile(name: "holi7", folder: nil),
+            .switchApp("Mail")
+        ])
+        XCTAssertEqual(parsed.dropped.map(\.index), [6], "an unknown scroll direction is dropped")
+        XCTAssertEqual(parsed.plan?.done, false)
+    }
+
+    @MainActor
+    func testRememberAndScrollPreview() {
+        let plan = ScreenPlan(summary: "", steps: [.remember("Total: 42"), .scroll(direction: "down", amount: 2, x: nil, y: nil)])
+        let preview = ScreenPlanValidator.preview(plan, snapshot: snapshot(), request: "email the total", details: MyDetails())
+        XCTAssertEqual(preview.lines.map(\.text), ["Remember: Total: 42", "Scroll down"])
+        guard case .scroll(let at, let dx, let dy)? = preview.actions.last else { return XCTFail("scroll") }
+        XCTAssertNil(at)
+        XCTAssertEqual(dx, 0)
+        XCTAssertLessThan(dy, 0, "down scrolls with a negative wheel value")
+        XCTAssertFalse(preview.needsApproval, "remembering and scrolling run without asking")
+    }
+
+    @MainActor
+    func testSwitchingAppsEndsTheRoundAndNeverOpensTerminal() {
+        let blocked = ScreenPlanValidator.preview(ScreenPlan(summary: "", steps: [.switchApp("Terminal")]), snapshot: snapshot(),
+                                                  request: "open terminal", details: MyDetails())
+        XCTAssertTrue(blocked.actions.isEmpty)
+        XCTAssertTrue(ScreenApps.isNeverSwitch("Terminal.app"))
+        XCTAssertTrue(ScreenApps.isNeverSwitch("the iTerm2 app"))
+        XCTAssertFalse(ScreenApps.isNeverSwitch("Mail"))
+        XCTAssertEqual(ScreenApps.cleaned("Google Chrome app"), "google chrome")
+        XCTAssertTrue(ScreenAction.switchApp(ScreenAppTarget(name: "Mail", bundleURL: nil, processID: nil)).changesApp)
+        XCTAssertTrue(ScreenAction.openFile(URL(fileURLWithPath: "/tmp/a.pdf")).changesApp)
+        XCTAssertFalse(ScreenAction.wait(100).changesApp)
+    }
+
+    @MainActor
+    func testFileWordsMustBeWordsTheUserSaid() {
+        XCTAssertEqual(ScreenFileFinder.words("my latest Resume_2026.pdf"), ["resume", "2026", "pdf"])
+        let invented = ScreenFileFinder.find(name: "passwords", folder: "Downloads", request: ToolGateText.fold("attach my resume"),
+                                             opening: false)
+        guard case .failure(let problem) = invented else { return XCTFail("a name the user didn't say is refused") }
+        XCTAssertTrue(problem.reason.contains("passwords"))
+        let nothing = ScreenFileFinder.find(name: "latest file", folder: nil, request: "attach the latest file", opening: false)
+        guard case .failure = nothing else { return XCTFail("no words and no folder: ask which file") }
+    }
+
+    @MainActor
+    func testQuickPlansNeedNoAI() {
+        XCTAssertEqual(ScreenQuickPlan.target(of: "Please open YouTube.com"), "youtube.com")
+        XCTAssertEqual(ScreenQuickPlan.webAddress("youtube.com"), "https://youtube.com")
+        XCTAssertEqual(ScreenQuickPlan.webAddress("apple.com/in website"), "https://apple.com/in")
+        XCTAssertNil(ScreenQuickPlan.webAddress("google chrome"))
+        XCTAssertEqual(ScreenQuickPlan.target(of: "hey bibbles can you launch Safari"), "safari")
+        XCTAssertNil(ScreenQuickPlan.target(of: "open Mail and write to Sam"), "more than opening goes to the planner")
+        XCTAssertNil(ScreenQuickPlan.target(of: "open this file"))
+        XCTAssertNil(ScreenQuickPlan.target(of: "export this to pdf"))
+        let web = ScreenQuickPlan.plan(for: "open youtube.com")
+        XCTAssertEqual(web?.steps, [.mac(AgentToolCall(name: "open_website", input: ["url": .string("https://youtube.com")]))])
+
+        XCTAssertTrue(ScreenQuickPlan.isOpenRequest("open the holi7 file in Downloads and export it to PDF"))
+        XCTAssertTrue(ScreenQuickPlan.isOpenRequest("please open Mail and write to Soham"))
+        XCTAssertFalse(ScreenQuickPlan.isOpenRequest("open this link"), "\"this\" needs the screen")
+        XCTAssertFalse(ScreenQuickPlan.isOpenRequest("start a happy song on the piano"))
+        XCTAssertFalse(ScreenQuickPlan.isOpenRequest("export this to pdf"))
+    }
+
+    @MainActor
+    func testVoiceCommands() {
+        for text in ["Stop", "stop!", "Bibbles, stop", "cancel", "ruko", "Stopp"] {
+            XCTAssertEqual(AgentVoiceCommand.parse(text), .stop, text)
+        }
+        for text in ["continue", "Go ahead.", "yes, do it", "carry on please", "weiter", "chalo"] {
+            XCTAssertEqual(AgentVoiceCommand.parse(text), .proceed, text)
+        }
+        for text in ["stop the music", "continue writing the mail to Sam", "start a timer for 5 minutes", "what time is it"] {
+            XCTAssertNil(AgentVoiceCommand.parse(text), text)
+        }
+    }
+
+    @MainActor
+    func testSpokenResultIsShort() {
+        let long = "Saved holi7.pdf in Desktop. Filled 3 fields. Did 4 steps in 2 parts. Stopped: the Send button wasn't there anymore after the page changed."
+        let spoken = AgentSpeech.short(long, limit: 60)
+        XCTAssertTrue(long.hasPrefix(spoken))
+        XCTAssertLessThanOrEqual(spoken.count, 60)
+        XCTAssertEqual(AgentSpeech.short("Done."), "Done.")
+    }
+
+    @MainActor
+    func testScreenshotPositionsRoundTrip() {
+        let frame = CGRect(x: 0, y: 0, width: 1_440, height: 900)
+        let point = ScreenGeometry.globalPoint(x: 0.25, y: 0.75, displayFrame: frame, primaryHeight: 900)
+        let back = ScreenGeometry.screenshotPoint(of: point, displayFrame: frame, primaryHeight: 900)
+        XCTAssertEqual(back?.x, 250)
+        XCTAssertEqual(back?.y, 750)
+        XCTAssertNil(ScreenGeometry.screenshotPoint(of: CGPoint(x: 5_000, y: 10), displayFrame: frame, primaryHeight: 900))
+
+        var described = ScreenSnapshot(appName: "Chrome", menus: [], controls: [
+            ScreenControl(role: "AXButton", title: "Reply", isOn: nil, options: [], center: point),
+            ScreenControl(role: "AXButton", title: "Load more", isOn: nil, options: [], center: CGPoint(x: 700, y: 2_000))
+        ], fields: [], screenFrame: frame)
+        described.primaryHeight = 900
+        let text = described.describe(details: MyDetails())
+        XCTAssertTrue(text.contains("button: Reply @ 250,750"))
+        XCTAssertTrue(text.contains("button: Load more\n") || text.hasSuffix("button: Load more"), "off screen: no position")
+    }
 }
 #endif

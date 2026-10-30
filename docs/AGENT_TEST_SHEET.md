@@ -73,3 +73,20 @@ Needs **Screen Recording** permission for Bibbles Dev, so the planner can see th
 | A6 | A drum website (keys or clickable pads) | "Play a rock beat on these drums" | Preview: "Play N notes with chords (about N s)". Kick and hi-hat land together. On key-based sites they're exact; on click-only sites they're a few ms apart. |
 | A7 | A virtual guitar website | "Strum a happy chord progression on this guitar" | Preview mentions "strums". The pointer drags across the strings while each chord is held. |
 | A8 | Any app with a slider (for example System Settings → Sound) | "Drag the volume slider to the middle" | Preview: "Drag “…”". It drags only after Start. |
+
+## Screen agent: web pages, scrolling, two apps, files, voice
+
+| # | Where | Say | Expected |
+|---|---|---|---|
+| W1 | Gmail in Chrome, a mail open | "Reply saying thanks, I'll check" | Part 1 clicks the **Reply** nearest to the one on screen (by name, not only by position) and types the text. Developer page → cost log shows the plan. |
+| W2 | A long web page | "Scroll down and click Load more" | Preview: "Scroll down", then "Looking again…". Part 2 clicks **Load more**. |
+| W3 | Gmail, a long thread | "Click Reply on the last message" | The button is scrolled into view first, then pressed. |
+| X1 | A PDF invoice open in Preview | "Take the total from this invoice and email it to soham@gmail.com" | Part 1: "Remember: Total: …" and "Switch to Mail". Part 2 (in Mail): new message, To, Subject, body with the same total. Send asks you first. |
+| X2 | Anywhere | "Open the holi7 file in Downloads and export it to PDF" | Part 1 (no screenshot): "Open “holi7.jpg” from Downloads". Part 2 in Preview: File ▸ Export as PDF… |
+| F1 | Mail, a new message open | "Attach my latest resume from Downloads" | Preview: "Attach “Resume….pdf” from Downloads" (the newest file with "resume" in its name). Start: the file appears as an attachment. |
+| F2 | Gmail compose in Chrome | "Attach my latest resume from Downloads" | Click the paperclip, then the file window opens and Bibbles chooses the file. |
+| F3 | Mail | "Attach my passwords file" when you said only "resume" before | Skipped: "“passwords” wasn't in your request". |
+| Q1 | Anywhere | "Open Safari" / "open youtube.com" | No AI call and no screenshot (cost log: "on this Mac (no AI)"). It opens right away, no Start needed. |
+| Q2 | Anywhere | "Open Terminal" | Nothing opens: Bibbles never works in Terminal. |
+| V1 | During A1 or W2, by voice | "Stop" | The task stops after the current step. No new request starts. |
+| V2 | A preview waiting for Start, by voice | "Continue" (or "go ahead") | Same as pressing Start / Continue. With voice replies on, Bibbles says "Ready. Say continue to start" when it waits, and a short result at the end. |

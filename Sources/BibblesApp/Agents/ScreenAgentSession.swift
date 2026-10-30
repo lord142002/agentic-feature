@@ -24,7 +24,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     let request: AgentRequest
     let strings: FilesAgentStrings
     let layer: String
-    let app: NSRunningApplication?
+    /// The app being worked in; changes when the agent switches apps or opens a file.
+    private(set) var app: NSRunningApplication?
     private let inserter: FocusedTextInserter
 
     @Published private(set) var phase: Phase = .looking
@@ -50,6 +51,30 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     private var log = AgentLogEntry(route: "agent_screen")
 
     var onFinished: ((String) -> Void)?
+    /// A plan is ready and waits for Start/Continue (said or clicked).
+    var onWaiting: (() -> Void)?
+
+    /// Still working or waiting: "stop" and "continue" said by voice apply to it.
+    var isActive: Bool {
+        switch phase {
+        case .looking, .planning, .preview, .running: return true
+        default: return false
+        }
+    }
+
+    /// "stop" / "continue" said while the task is open. Returns true when handled.
+    func handle(_ command: AgentVoiceCommand) -> Bool {
+        switch command {
+        case .stop:
+            guard isActive else { return false }
+            if phase == .preview { cancel(); result.stopped = true; finish() } else { stop() }
+            return true
+        case .proceed:
+            guard phase == .preview, !preview.isEmpty else { return false }
+            confirm()
+            return true
+        }
+    }
 
     init(text: String, app: NSRunningApplication?, inserter: FocusedTextInserter, layer: String = "keyword") {
         request = AgentRequest(text: text)
@@ -94,7 +119,22 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 guard let app = self.app, !app.isTerminated else {
                     throw AgentError.folder("Click into the app you want Bibbles to work in, then ask again.")
                 }
-                var snapshot = ScreenAX.snapshot(of: app)
+                // "open Safari", "open youtube.com": no AI and no screenshot.
+                if isFirst, let quick = ScreenQuickPlan.plan(for: text) {
+                    let snapshot = ScreenSnapshot(appName: app.localizedName ?? "this app", menus: [], controls: [], fields: [])
+                    self.madeOnMac = true
+                    self.log.plannerModel = "on this Mac (no AI)"
+                    self.planSummary = quick.summary
+                    self.preview = ScreenPlanValidator.preview(quick, snapshot: snapshot, request: text, details: MyDetails())
+                    self.planDone = true
+                    self.log.stepsPlanned += quick.steps.count
+                    self.log.stepsValid += self.preview.actions.count
+                    self.phase = .preview
+                    // Opening an app or a website is harmless: go straight on.
+                    if !self.preview.isEmpty { self.confirm() }
+                    return
+                }
+                var snapshot = await ScreenAX.snapshot(of: app)
                 let details = MyDetailsStore.load()
                 self.log.filesScanned += snapshot.fields.count + snapshot.controls.count
                 let plan: ScreenPlan
@@ -112,7 +152,9 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                     self.log.plannerModel = "on this Mac (no AI)"
                 } else {
                     // A screenshot lets the planner click what Accessibility can't describe.
-                    let capture = await Self.screenshot(of: app)
+                    // "open the holi7 file in Downloads" needs none: faster and cheaper.
+                    let capture: (jpeg: Data, frame: CGRect)?
+                    if isFirst && ScreenQuickPlan.isOpenRequest(text) { capture = nil } else { capture = await Self.screenshot(of: app) }
                     snapshot.screenFrame = capture?.frame
                     self.phase = .planning
                     let started = Date()
@@ -150,13 +192,15 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 self.log.stepsPlanned += plan.steps.count + dropped.count
                 self.log.stepsDropped += preview.dropped.count
                 self.log.stepsValid += preview.actions.count
-                self.planDone = plan.done
+                // After switching apps or opening a file, always look at the new window.
+                self.planDone = plan.done && !(preview.actions.last?.changesApp ?? false)
                 if !plan.summary.isEmpty { self.planSummary = plan.summary }
                 self.preview = preview
                 if preview.isEmpty, !isFirst {
                     self.finish()
                 } else if isFirst || preview.needsApproval {
                     self.phase = .preview
+                    if !preview.isEmpty { self.onWaiting?() }
                 } else {
                     // Clicks, keys and waits in later rounds run straight on (Stop works).
                     self.phase = .preview
@@ -216,6 +260,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
             }
             guard let self else { return }
             self.merge(roundResult)
+            if let switched = roundResult.switchedApp { self.app = switched }
             self.history += lines.prefix(roundResult.done)
             self.log.executeMilliseconds = (self.log.executeMilliseconds ?? 0) + Int(Date().timeIntervalSince(roundStarted) * 1000)
             let outOfTime = Date().timeIntervalSince(self.startedAt) > Self.maxDuration

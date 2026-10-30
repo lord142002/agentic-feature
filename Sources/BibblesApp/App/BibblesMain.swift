@@ -125,6 +125,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     )
     #if BIBBLES_DEVELOPER
     private lazy var agentPanel = AgentPanelController()
+    /// The agent task on screen, for "stop" / "continue" said by voice.
+    private weak var activeScreenSession: ScreenAgentSession?
+    private weak var activeFilesSession: FilesAgentSession?
     #endif
     /// The "Welcome to Bibbles" guide (first launch, the notch's info button, Help).
     private lazy var welcomeWindow: WelcomeWindowController = WelcomeWindowController(
@@ -915,6 +918,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     /// on: then keywords decide first, and Claude Haiku labels only the
     /// requests they can't decide. The user's words are never changed.
     private func dispatch(_ intent: BibblesIntent, transcript: String) {
+        #if BIBBLES_DEVELOPER
+        if intent != .dictate, handleAgentVoiceCommand(transcript) { return }
+        #endif
         if intent != .dictate { stopWalkthrough() }
         var intent = intent
         var hereWrite = false
@@ -2408,8 +2414,10 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             guard let self else { return }
             self.chatStore.recordExchange(userText: transcript, assistantText: summary)
             self.interaction.modelLabel = label
-            if speak { self.voiceReply.speak(summary) }
+            if speak { self.voiceReply.speak(AgentSpeech.short(summary)) }
         }
+        activeFilesSession = session
+        activeScreenSession = nil
         agentPanel.show(session)
         session.start()
     }
@@ -2429,10 +2437,34 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             guard let self else { return }
             self.chatStore.recordExchange(userText: transcript, assistantText: summary)
             self.interaction.modelLabel = label
-            if speak { self.voiceReply.speak(summary) }
+            if speak { self.voiceReply.speak(AgentSpeech.short(summary)) }
         }
+        // Asked by voice: say when it waits, so "continue" can be said back.
+        session.onWaiting = { [weak self, weak session] in
+            guard speak, let self, let session else { return }
+            self.voiceReply.speak(session.round == 1 ? "Ready. Say continue to start, or stop." : "Ready for the next part. Say continue.")
+        }
+        activeScreenSession = session
+        activeFilesSession = nil
         agentPanel.show(session)
         session.start()
+    }
+
+    /// "stop" / "continue" said while an agent task is open. Anything else is a new request.
+    private func handleAgentVoiceCommand(_ transcript: String) -> Bool {
+        guard let command = AgentVoiceCommand.parse(transcript) else { return false }
+        var handled = false
+        if let session = activeScreenSession, session.isActive {
+            handled = session.handle(command)
+        } else if let session = activeFilesSession {
+            handled = session.handle(command)
+        }
+        guard handled else { return false }
+        shouldSpeakNextAnswer = false
+        voiceReply.stop()
+        dismissTask?.cancel()
+        overlay.hide()
+        return true
     }
 
     @objc private func undoLastAgentTask() {

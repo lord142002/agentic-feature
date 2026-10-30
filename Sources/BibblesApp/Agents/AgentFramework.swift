@@ -27,6 +27,22 @@ enum AgentSettings {
     }
 }
 
+/// The spoken version of an agent's result: the first sentence or two, short.
+enum AgentSpeech {
+    static func short(_ summary: String, limit: Int = 160) -> String {
+        let text = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count > limit else { return text }
+        var spoken = ""
+        text.enumerateSubstrings(in: text.startIndex..., options: .bySentences) { sentence, _, _, stop in
+            guard let sentence else { return }
+            if !spoken.isEmpty, spoken.count + sentence.count > limit { stop = true; return }
+            spoken += sentence
+        }
+        if spoken.isEmpty || spoken.count > limit { spoken = String(text.prefix(limit)) }
+        return spoken.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
 /// What the user asked, in their own words and language.
 struct AgentRequest: Equatable {
     let text: String
