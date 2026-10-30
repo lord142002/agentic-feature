@@ -504,6 +504,41 @@ final class ScreenAgentTests: XCTestCase {
     }
 
     @MainActor
+    func testComposeEmailPutsEachPartInItsBox() {
+        let text = #"{"summary":"","done":true,"steps":[{"action":"compose_email","recipients":"mohit55599@gmail.com, boss@x.com","subject":"Invoice total","body":"Hi Mohit,\n\nHow are you?\n\nTotal: £600.00"}]}"#
+        guard case .composeEmail(let recipients, let subject, let body)? = ScreenPlanParser.parse(text).plan?.steps.first else {
+            return XCTFail("compose_email")
+        }
+        XCTAssertEqual(recipients, "mohit55599@gmail.com, boss@x.com")
+        XCTAssertEqual(subject, "Invoice total")
+        XCTAssertEqual(body, "Hi Mohit,\n\nHow are you?\n\nTotal: £600.00")
+
+        let messageBox = FormField(id: 4, element: AXUIElementCreateApplication(getpid()), role: "AXWebArea", label: "Message body",
+                                   value: "", hasCursor: false)
+        let compose = snapshot(fields: [field(1, "To:"), field(2, "Cc:"), field(3, "Subject:"), messageBox])
+        let request = "take the total from this image and open apple mail to email it to \"mohit55599@gmail.com\" and greet Mohit"
+        let preview = ScreenPlanValidator.preview(ScreenPlanParser.parse(text).plan!, snapshot: compose, request: request, details: me)
+        guard case .composeEmail(let parts)? = preview.actions.first else { return XCTFail("one email step") }
+        XCTAssertEqual(parts.map(\.field.id), [1, 3, 4], "To, Subject and the message, never Cc")
+        XCTAssertEqual(parts.map(\.text).first, "mohit55599@gmail.com", "only the address the user said")
+        XCTAssertTrue(preview.notes.contains { $0.contains("boss@x.com") })
+        XCTAssertTrue(preview.needsApproval, "the user sees the email before it is written")
+
+        // Spoken addresses count as said.
+        XCTAssertTrue(MailCompose.userSaid("sam.k@work.com", in: "email sam dot k at work dot com"))
+        XCTAssertFalse(MailCompose.userSaid("sam@evil.com", in: "email sam at work dot com"))
+
+        // No compose window yet, right after File ▸ New Message: look again instead of skipping.
+        let menus: [(path: [String], enabled: Bool)] = [(["File", "New Message"], true)]
+        let opening = ScreenPlan(summary: "", steps: [.menu(["File", "New Message"]),
+                                                      .composeEmail(recipients: "mohit55599@gmail.com", subject: "Hi", body: "Hello")])
+        let first = ScreenPlanValidator.preview(opening, snapshot: snapshot(menus: menus), request: request, details: me)
+        XCTAssertEqual(first.lines.map(\.text), ["Choose File ▸ New Message"])
+        XCTAssertTrue(first.looksAgain)
+        XCTAssertTrue(first.dropped.isEmpty)
+    }
+
+    @MainActor
     func testMailBoxesAreFilledByName() {
         // Slips seen in Mail: "type" into a named box, and switch_app with the name in another field.
         let text = #"{"summary":"","done":false,"steps":[{"action":"type","field":"Subject:","text":"Invoice total"},{"action":"switch_app","label":"Mail"},{"action":"type","label":"To:"}]}"#

@@ -51,6 +51,8 @@ enum ScreenStep: Equatable {
     case attach(name: String, folder: String?)
     /// Opens a file found on the Mac in its usual app; later rounds work there.
     case openFile(name: String, folder: String?)
+    /// Writes an email in the open compose window: each part goes into its own box.
+    case composeEmail(recipients: String?, subject: String?, body: String?)
 }
 
 /// A point on the screenshot (0…1 from the top left).
@@ -105,6 +107,7 @@ enum ScreenPlanParser {
             "properties": [
                 "action": ["type": "string", "enum": actions],
                 "direction": ["type": "string"], "amount": ["type": "integer"], "app": ["type": "string"],
+                "recipients": ["type": "string"], "subject": ["type": "string"], "body": ["type": "string"],
                 "x": ["type": "number"], "y": ["type": "number"], "label": ["type": "string"], "final": ["type": "boolean"],
                 "text": ["type": "string"], "keys": ["type": "string"], "ms": ["type": "integer"],
                 "notes": ["type": "array", "items": ["type": "object"]],
@@ -162,7 +165,8 @@ enum ScreenPlanParser {
             "label": nullable("string"), "final": nullable("boolean"),
             "text": nullable("string"), "keys": nullable("string"), "ms": nullable("integer"),
             "notes": ["type": ["array", "null"], "items": note],
-            "direction": nullable("string"), "amount": nullable("integer"), "app": nullable("string")
+            "direction": nullable("string"), "amount": nullable("integer"), "app": nullable("string"),
+            "recipients": nullable("string"), "subject": nullable("string"), "body": nullable("string")
         ]
         let step: [String: Any] = ["type": "object", "additionalProperties": false, "required": Array(stepProperties.keys).sorted(),
                                    "properties": stepProperties]
@@ -197,14 +201,15 @@ enum ScreenPlanParser {
     }
 
     static let actions = ["menu", "press", "fill", "toggle", "choose", "mac", "save", "click", "type", "key", "play", "wait", "drag",
-                          "scroll", "switch_app", "remember", "attach", "open_file"]
+                          "scroll", "switch_app", "remember", "attach", "open_file", "compose_email"]
     /// Small, unambiguous slips a model makes, mapped to Bibbles' own names.
     static let actionAliases = ["tap": "click", "left_click": "click", "mouse_click": "click", "double_click": "click",
                                 "type_text": "type", "input": "type", "write": "type", "keypress": "key", "press_key": "key",
                                 "hotkey": "key", "shortcut": "key", "sleep": "wait", "pause": "wait", "open_url": "mac",
                                 "select": "choose", "check": "toggle", "scroll_down": "scroll", "scroll_up": "scroll",
                                 "activate_app": "switch_app", "switch_to": "switch_app", "focus_app": "switch_app",
-                                "note": "remember", "attach_file": "attach", "upload": "attach", "open_document": "open_file"]
+                                "note": "remember", "attach_file": "attach", "upload": "attach", "open_document": "open_file",
+                                "write_email": "compose_email", "email": "compose_email", "compose": "compose_email"]
 
     /// Accepts safe variations: "type"/"kind"/"step" for "action", known aliases,
     /// "coordinate": [x, y] or "point": {x, y}, "key" for "keys", "url" for open_url;
@@ -237,6 +242,13 @@ enum ScreenPlanParser {
                 ?? (object["input"] as? [String: Any])?["name"]
         }
         if name == "remember", object["text"] == nil { object["text"] = object["value"] ?? object["note"] }
+        if name == "fill", object["value"] == nil { object["value"] = object["text"] ?? object["content"] ?? object["body"] }
+        if name == "compose_email" {
+            if object["recipients"] == nil {
+                if let to = object["to"] as? String { object["recipients"] = to } else { object["recipients"] = object["recipient"] ?? object["email"] }
+            }
+            if object["body"] == nil { object["body"] = object["text"] ?? object["message"] ?? object["value"] }
+        }
         if name == "attach" || name == "open_file", object["name"] == nil { object["name"] = object["file"] ?? object["target"] }
         if object["x"] == nil, let pair = object["coordinate"] as? [Any] ?? object["coordinates"] as? [Any], pair.count == 2 {
             object["x"] = pair[0]
@@ -279,7 +291,7 @@ enum ScreenPlanParser {
                                        "key": "an allowed key (never quit or force)", "play": "notes", "wait": "a time",
                                        "drag": "start and end points", "scroll": "a direction",
                                        "switch_app": "an app name", "remember": "text", "attach": "a file name",
-                                       "open_file": "a file name"]
+                                       "open_file": "a file name", "compose_email": "recipients, a subject or a body"]
         let had = raw.filter { !($0.value is NSNull) }.keys.filter { $0 != "action" }.sorted().prefix(5).joined(separator: ", ")
         return "“\(name)” is missing \(needs[name] ?? "details")" + (had.isEmpty ? "" : " (it had: \(had))")
     }
@@ -364,6 +376,14 @@ enum ScreenPlanParser {
             return text("name").map { .attach(name: $0, folder: text("folder")) }
         case "open_file":
             return text("name").map { .openFile(name: $0, folder: text("folder")) }
+        case "compose_email":
+            func long(_ key: String) -> String? {
+                guard let value = (object[key] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+                return String(value.prefix(5_000))
+            }
+            let recipients = text("recipients"), subject = long("subject"), body = long("body")
+            guard recipients != nil || subject != nil || body != nil else { return nil }
+            return .composeEmail(recipients: recipients, subject: subject, body: body)
         case "wait":
             return .wait(min(5_000, max(100, (object["ms"] as? NSNumber)?.intValue ?? 1_000)))
         case "mac":
@@ -720,6 +740,49 @@ enum ScreenSaveLocation {
         let path = url.standardizedFileURL.path
         guard path.hasPrefix(home + "/") else { return path == home ? "your home folder" : path }
         return path.dropFirst(home.count + 1).split(separator: "/").joined(separator: " ▸ ")
+    }
+}
+
+// MARK: - Email boxes (no AI)
+
+extension MailCompose {
+    static func isRecipientsLabel(_ label: String) -> Bool {
+        let name = label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ":")))
+        return name == "to" || name.hasPrefix("to ") || name.contains("recipient") || name.hasPrefix("send to")
+    }
+
+    /// The To, Subject and message boxes of a compose window (by label; the
+    /// message is the box named body/message, or the big text area left over).
+    static func boxes(in fields: [FormField]) -> (to: FormField?, subject: FormField?, body: FormField?) {
+        let to = fields.first { isRecipientsLabel($0.label) }
+        let subject = fields.first { $0.label.lowercased().contains("subject") }
+        let rest = fields.filter { field in
+            let name = field.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ":")))
+            return field.id != to?.id && field.id != subject?.id && name != "cc" && name != "bcc"
+        }
+        let body = rest.first { field in
+            let name = field.label.lowercased()
+            return name.contains("body") || name.contains("message")
+        } ?? rest.first { $0.role == "AXWebArea" || $0.role == "AXTextArea" }
+        return (to, subject, body)
+    }
+
+    /// Email addresses in a text ("a@b.com, c@d.org").
+    static func addresses(in text: String) -> [String] {
+        guard let pattern = try? NSRegularExpression(pattern: #"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"#) else { return [] }
+        return pattern.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            Range($0.range, in: text).map { String(text[$0]) }
+        }
+    }
+
+    /// The user said this address, written ("sam@x.com") or spoken ("sam at x dot com").
+    static func userSaid(_ address: String, in request: String) -> Bool {
+        func compact(_ text: String) -> String {
+            let spoken = (" " + text.lowercased() + " ").replacingOccurrences(of: " at ", with: "@").replacingOccurrences(of: " dot ", with: ".")
+            return spoken.filter { $0.isLetter || $0.isNumber }
+        }
+        let wanted = compact(address)
+        return !wanted.isEmpty && compact(request).contains(wanted)
     }
 }
 
@@ -1434,6 +1497,8 @@ enum ScreenAction {
     case remember(String)
     case attach(URL)
     case openFile(URL)
+    /// Each part into its box (To, Subject, message).
+    case composeEmail([(field: FormField, text: String)])
 
     /// Ends the round: the next steps are planned for the app now in front.
     var changesApp: Bool {
@@ -1477,7 +1542,7 @@ struct ScreenPreview {
     var needsApproval: Bool {
         lines.contains(where: \.asksFirst) || actions.contains {
             switch $0 {
-            case .fill, .type, .attach: return true
+            case .fill, .type, .attach, .composeEmail: return true
             default: return false
             }
         }
@@ -1702,6 +1767,43 @@ enum ScreenPlanValidator {
                 case .success(let url):
                     add(.attach(url), "Attach “\(url.lastPathComponent)” from \(ScreenSaveLocation.display(url.deletingLastPathComponent()))")
                 }
+            case .composeEmail(let recipients, let subject, let body):
+                let boxes = MailCompose.boxes(in: snapshot.fields)
+                guard boxes.to != nil || boxes.subject != nil else {
+                    if looksAgainInstead() { continue }
+                    drop(index, "no email window is open: open a new message first"); continue
+                }
+                var parts: [(field: FormField, text: String)] = []
+                var described: [String] = []
+                if let recipients, let box = boxes.to {
+                    // Only addresses the user said: never a guessed one.
+                    let all = MailCompose.addresses(in: recipients)
+                    let said = all.filter { MailCompose.userSaid($0, in: request) }
+                    for left in all where !said.contains(left) { preview.notes.append("Left out “\(left)”: it isn't an address you said") }
+                    if !said.isEmpty {
+                        parts.append((box, said.joined(separator: ", ")))
+                        described.append("To: " + said.joined(separator: ", "))
+                    }
+                }
+                if let subject, let box = boxes.subject {
+                    let typed = typing(subject, details: details).text
+                    if !typed.isEmpty {
+                        parts.append((box, typed))
+                        described.append("Subject: “\(typed)”")
+                    }
+                }
+                if let body {
+                    let (typed, missing) = typing(body, details: details)
+                    for key in missing { preview.notes.append("Left out your \(key.lowercased()): it isn't in Settings → Developer → My details") }
+                    if let box = boxes.body, !typed.isEmpty {
+                        parts.append((box, typed))
+                        described.append("Message: “\(typed.count > 140 ? String(typed.prefix(140)) + "…" : typed)”")
+                    } else if !typed.isEmpty {
+                        preview.notes.append("Couldn't find the message box, so the message wasn't written")
+                    }
+                }
+                guard !parts.isEmpty else { drop(index, "nothing to write into the email"); continue }
+                add(.composeEmail(parts), "Write the email — " + described.joined(separator: " · "))
             case .openFile(let name, let folder):
                 switch ScreenFileFinder.find(name: name, folder: folder, request: requestFolded, opening: true) {
                 case .failure(let problem): drop(index, problem.reason)
@@ -1805,7 +1907,8 @@ enum ScreenAgentPrompt {
         - remember {"text":"Invoice total: ₹4,250"}: keeps a fact you can see now for later steps in another app (it appears in "Already done"). Copy it exactly from the screen; never guess.
         - open_file {"name":"holi7","folder":"Downloads"}: opens a file on the Mac in its usual app. name = words of the file name the user said; folder only when the user said it. Make it the LAST step and set "done": false.
         - attach {"name":"resume","folder":"Downloads"}: attaches the newest file whose name has these words. In Apple Mail just click the message body first. On websites (Gmail, Outlook) first click the paperclip / "Attach files" button in one answer, then "attach" in the same answer right after it: Bibbles fills the file window. Bibbles finds the file on the Mac; never write a path.
-        To put text into a listed field (To, Subject, a form field), use fill with its exact label, e.g. fill {"field":"To:","value":"sam@x.com"} and fill {"field":"Subject:","value":"Invoice total"}. Use click + type only for a message body or a box that isn't listed.
+        - compose_email {"recipients":"sam@x.com","subject":"Invoice total","body":"Hi Sam,\n\n…"}: writes an email in the open compose window (Apple Mail, Gmail, Outlook). Bibbles puts each part in its own box (To, Subject, message). ALWAYS use this for emails, never fill/type for them. recipients: only addresses the user said. Write the full body yourself, following what the user asked for. If no compose window is open yet, open one first (Mail: menu File ▸ New Message; Gmail: click Compose), set "done": false, and write it in the next answer.
+        For other forms, put text into a listed field with fill and its exact label.
         Positions: the description gives "@ x,y" (0-1000 on the screenshot) for buttons and fields it can see. Use those numbers for clicks: they are exact. When a button is listed, click it with its exact name as the label.
         - mac {"tool":"open_website","input":{"url":"https://…"}} | set_dark_mode {"mode":"on|off|toggle"} | set_volume {"action":"set|up|down|mute|unmute","level":0-100} | set_brightness {"action":"up|down"} | open_app {"name"}.
         Prefer menu, press, fill and save (exact) over click (approximate). For Mac-wide dark mode, volume or brightness use one mac step.
@@ -1955,6 +2058,22 @@ final class ScreenExecutor {
             let items = ScreenAX.children(found.element).flatMap(ScreenAX.children)
             guard let item = items.first(where: { ScreenAX.normalized(ScreenAX.title($0)) == ScreenAX.normalized(option) }),
                   ScreenAX.press(item) else { return "couldn't choose “\(option)”" }
+        case .composeEmail(let parts):
+            for (field, text) in parts {
+                if stopRequested { break }
+                // Focus the box, click into it (Mail's message is a web view), then paste.
+                AXUIElementSetAttributeValue(field.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                if let middle = ScreenAX.center(of: field.element) { ScreenAX.click(at: middle) }
+                try? await Task.sleep(nanoseconds: 350_000_000)
+                if !field.value.isEmpty, field.role != "AXWebArea" {
+                    inserter.pressSelectAll()
+                    try? await Task.sleep(nanoseconds: 120_000_000)
+                }
+                do { try inserter.paste(text, restoringClipboard: true) } catch { return "couldn't type into “\(field.label)”" }
+                lastTextElement = field.element
+                // Let the app read the clipboard before the next box.
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
         case .fill(let field, let text):
             let filled = await FormFieldFiller(inserter: inserter).fill([FormFillAction(field: field.id, text: text, replace: true)],
                                                                          fields: [field])
