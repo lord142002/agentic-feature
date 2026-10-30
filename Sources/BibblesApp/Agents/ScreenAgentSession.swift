@@ -193,7 +193,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 self.log.stepsDropped += preview.dropped.count
                 self.log.stepsValid += preview.actions.count
                 // After switching apps or opening a file, always look at the new window.
-                self.planDone = plan.done && !(preview.actions.last?.changesApp ?? false)
+                self.planDone = plan.done && !(preview.actions.last?.changesApp ?? false) && !preview.looksAgain
                 if !plan.summary.isEmpty { self.planSummary = plan.summary }
                 self.preview = preview
                 if preview.isEmpty, !isFirst {

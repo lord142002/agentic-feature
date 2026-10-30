@@ -237,13 +237,21 @@ final class ScreenAgentTests: XCTestCase {
     func testSendIsDroppedWhenAnEarlierStepWasSkipped() {
         var screen = snapshot()
         screen.screenFrame = CGRect(x: 0, y: 0, width: 1_000, height: 800)
-        let plan = ScreenPlan(summary: "", steps: [.click(x: 0.3, y: 0.9, label: "Reply", final: false),
-                                                   .fill(field: "Nickname", value: "Mo"),          // no such field: skipped
+        let plan = ScreenPlan(summary: "", steps: [.fill(field: "Nickname", value: "Mo"),          // no such field: skipped
                                                    .click(x: 0.4, y: 0.9, label: "Send", final: true)])
         let preview = ScreenPlanValidator.preview(plan, snapshot: screen, request: "reply and send", details: me)
-        XCTAssertEqual(preview.lines.map(\.text), ["Click “Reply”"])
-        XCTAssertEqual(preview.dropped.map(\.index), [1, 2])
+        XCTAssertTrue(preview.lines.isEmpty)
+        XCTAssertEqual(preview.dropped.map(\.index), [0, 1])
         XCTAssertTrue(preview.dropped[1].reason.contains("an earlier step was skipped"))
+
+        // After a click that may open a box, a box that isn't there yet means "look again", not "skip".
+        let later = ScreenPlan(summary: "", steps: [.click(x: 0.3, y: 0.9, label: "Reply", final: false),
+                                                    .fill(field: "Nickname", value: "Mo"),
+                                                    .click(x: 0.4, y: 0.9, label: "Send", final: true)])
+        let looked = ScreenPlanValidator.preview(later, snapshot: screen, request: "reply and send", details: me)
+        XCTAssertEqual(looked.lines.map(\.text), ["Click “Reply”"])
+        XCTAssertTrue(looked.dropped.isEmpty)
+        XCTAssertTrue(looked.looksAgain, "Send is planned again once the reply box is open")
 
         let typed = ScreenPlan(summary: "", steps: [.click(x: 0.3, y: 0.9, label: "Reply", final: false),
                                                     .type("Please block my account. {{fullName}}"),
@@ -474,6 +482,26 @@ final class ScreenAgentTests: XCTestCase {
     }
 
     // MARK: Scroll, other apps, files, quick plans, voice
+
+    @MainActor
+    func testNewMessageWindowIsLookedAtBeforeFillingIt() {
+        // Mail's main window: no To box yet. The plan opens New Message, then fills it.
+        let menus: [(path: [String], enabled: Bool)] = [(["File", "New Message"], true)]
+        let plan = ScreenPlan(summary: "", steps: [.menu(["File", "New Message"]), .wait(1_500),
+                                                   .fill(field: "Email", value: "soham@gmail.com"),
+                                                   .type("Total: £600.00"), .key("cmd+return", final: true)], done: true)
+        let preview = ScreenPlanValidator.preview(plan, snapshot: snapshot(menus: menus),
+                                                  request: "email the total to soham@gmail.com", details: me)
+        XCTAssertEqual(preview.lines.map(\.text), ["Choose File ▸ New Message", "Wait 1.5 s"])
+        XCTAssertTrue(preview.dropped.isEmpty, "nothing is skipped: the rest waits for the new window")
+        XCTAssertTrue(preview.looksAgain)
+
+        // In the new window, "Email" finds the To box.
+        let compose = snapshot(fields: [field(1, "To:"), field(2, "Subject:")])
+        let filled = ScreenPlanValidator.preview(ScreenPlan(summary: "", steps: [.fill(field: "Email", value: "soham@gmail.com")]),
+                                                 snapshot: compose, request: "email the total to soham@gmail.com", details: me)
+        XCTAssertEqual(filled.lines.map(\.text), ["Type “soham@gmail.com” into “To:”"])
+    }
 
     @MainActor
     func testParsesNewSteps() {

@@ -1455,6 +1455,9 @@ struct ScreenPreview {
     var dropped: [AgentDroppedStep] = []
     /// Things changed but not skipped ("left out your full name").
     var notes: [String] = []
+    /// The plan went on into a window that isn't open yet: Bibbles runs up to
+    /// there, then looks again and plans the rest for the new window.
+    var looksAgain = false
     var isEmpty: Bool { actions.isEmpty }
     var fills: Int { actions.filter { if case .fill = $0 { return true } else { return false } }.count }
 
@@ -1481,7 +1484,13 @@ enum ScreenPlanValidator {
         let requestFolded = ToolGateText.fold(request)
         func drop(_ index: Int, _ reason: String) { preview.dropped.append(AgentDroppedStep(index: index, reason: reason)) }
         var currentIndex = 0
+        // A menu command, button, click or key before this step may open a new window.
+        var screenChanged = false
         func add(_ action: ScreenAction, _ text: String, asksFirst: Bool = false) {
+            switch action {
+            case .fill, .type, .wait, .remember, .toggle, .choose: break
+            default: screenChanged = true
+            }
             // A final action (Send…) never follows a skipped step: it could send an empty or wrong message.
             if asksFirst, !preview.dropped.isEmpty {
                 preview.dropped.append(AgentDroppedStep(index: currentIndex, reason: "“\(text)” not done because an earlier step was skipped"))
@@ -1498,6 +1507,14 @@ enum ScreenPlanValidator {
         func point(_ x: Double, _ y: Double) -> CGPoint? {
             snapshot.screenFrame.map { ScreenGeometry.globalPoint(x: x, y: y, displayFrame: $0, primaryHeight: ScreenGeometry.primaryHeight) }
         }
+        /// Not on screen yet, but an earlier step may open it (File ▸ New Message, then the To box):
+        /// stop here and look again instead of skipping it.
+        func looksAgainInstead() -> Bool {
+            guard screenChanged else { return false }
+            preview.looksAgain = true
+            preview.notes.append("Bibbles looks at the new window before the next steps")
+            return true
+        }
         func control(_ title: String, roles: Set<String>) -> ScreenControl? {
             let key = ScreenAX.normalized(title)
             let matches = snapshot.controls.filter { roles.contains($0.role) }
@@ -1507,12 +1524,13 @@ enum ScreenPlanValidator {
         for (index, step) in plan.steps.enumerated() {
             currentIndex = index
             // After switching apps or opening a file, Bibbles looks at the new window before planning more.
-            if preview.actions.last?.changesApp == true { break }
+            if preview.actions.last?.changesApp == true || preview.looksAgain { break }
             switch step {
             case .menu(let path):
                 if let reason = blockedReason(path.last ?? "") { drop(index, reason); continue }
                 let key = path.map(ScreenAX.normalized)
                 guard let item = snapshot.menus.first(where: { $0.path.map(ScreenAX.normalized) == key }) else {
+                    if looksAgainInstead() { continue }
                     drop(index, "“\(path.joined(separator: " ▸ "))” isn't in this app's menus"); continue
                 }
                 guard item.enabled else { drop(index, "“\(path.last ?? "")” is greyed out right now"); continue }
@@ -1522,12 +1540,16 @@ enum ScreenPlanValidator {
                 if let reason = blockedReason(title) { drop(index, reason); continue }
                 let existing = control(title, roles: ["AXButton", "AXLink", "AXRadioButton", "AXMenuButton"])
                 let dialogButton = opensDialog && ScreenSafety.dialogButtons.contains(ScreenAX.normalized(title))
-                guard existing != nil || dialogButton else { drop(index, "no “\(title)” button on screen"); continue }
+                guard existing != nil || dialogButton else {
+                    if looksAgainInstead() { continue }
+                    drop(index, "no “\(title)” button on screen"); continue
+                }
                 add(.press(existing?.title ?? title), "Press “\(existing?.title ?? title)”", asksFirst: isFinal(title))
                 opensDialog = true
             case .toggle(let title, let on):
                 if let reason = blockedReason(title) { drop(index, reason); continue }
                 guard let box = control(title, roles: ["AXCheckBox", "AXRadioButton"]) else {
+                    if looksAgainInstead() { continue }
                     drop(index, "no “\(title)” switch on screen"); continue
                 }
                 if box.isOn == on { continue }
@@ -1540,6 +1562,8 @@ enum ScreenPlanValidator {
                     // A pop-up in the sheet a menu command opens (Format: PDF, PNG…).
                     if opensDialog {
                         add(.choose(title, option: option), "Choose “\(option)” in “\(title)”")
+                    } else if looksAgainInstead() {
+                        continue
                     } else {
                         drop(index, "no “\(title)” menu on screen")
                     }
@@ -1552,8 +1576,15 @@ enum ScreenPlanValidator {
             case .fill(let label, let value):
                 if MyDetailsMatcher.isNeverFill(label) { drop(index, "Bibbles never fills “\(label)”"); continue }
                 let key = ScreenAX.normalized(label)
+                // "Email" / "Recipient" for a mail's To box.
+                let recipientWords: Set<String> = ["email", "e mail", "recipient", "recipients", "email address", "to address"]
                 guard let field = snapshot.fields.first(where: { ScreenAX.normalized($0.label) == key })
-                        ?? snapshot.fields.first(where: { ScreenAX.normalized($0.label).contains(key) }) else {
+                        ?? snapshot.fields.first(where: { ScreenAX.normalized($0.label).contains(key) })
+                        ?? (recipientWords.contains(key) ? snapshot.fields.first(where: {
+                            let name = ScreenAX.normalized($0.label)
+                            return name == "to" || name.hasPrefix("to ") || name.contains("recipient")
+                        }) : nil) else {
+                    if looksAgainInstead() { continue }
                     drop(index, "no “\(label)” field on screen"); continue
                 }
                 if MyDetailsMatcher.isNeverFill(field.label) { drop(index, "Bibbles never fills “\(field.label)”"); continue }
