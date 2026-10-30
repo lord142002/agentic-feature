@@ -524,6 +524,16 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertTrue(preview.notes.contains { $0.contains("boss@x.com") })
         XCTAssertTrue(preview.needsApproval, "the user sees the email before it is written")
 
+        // The plan left the address out, and Mail's To box has no label: the address
+        // written in the request goes into the first box above Subject.
+        let unlabeled = snapshot(fields: [field(1, ""), field(2, "Cc:"), field(3, "Subject:"), messageBox])
+        let curly = "take the total from this image and open apple mail to email it to \"mohit55599@gmail.com” and greet Mohit"
+        let noTo = ScreenPlan(summary: "", steps: [.composeEmail(recipients: nil, subject: "Invoice", body: "Hi Mohit")])
+        let filled = ScreenPlanValidator.preview(noTo, snapshot: unlabeled, request: curly, details: me)
+        guard case .composeEmail(let boxes)? = filled.actions.first else { return XCTFail("one email step") }
+        XCTAssertEqual(boxes.map(\.field.id), [1, 3, 4])
+        XCTAssertEqual(boxes.first?.text, "mohit55599@gmail.com")
+
         // Spoken addresses count as said.
         XCTAssertTrue(MailCompose.userSaid("sam.k@work.com", in: "email sam dot k at work dot com"))
         XCTAssertFalse(MailCompose.userSaid("sam@evil.com", in: "email sam at work dot com"))

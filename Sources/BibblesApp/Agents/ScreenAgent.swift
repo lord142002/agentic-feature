@@ -754,8 +754,18 @@ extension MailCompose {
     /// The To, Subject and message boxes of a compose window (by label; the
     /// message is the box named body/message, or the big text area left over).
     static func boxes(in fields: [FormField]) -> (to: FormField?, subject: FormField?, body: FormField?) {
-        let to = fields.first { isRecipientsLabel($0.label) }
         let subject = fields.first { $0.label.lowercased().contains("subject") }
+        func plain(_ field: FormField) -> String {
+            field.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ":")))
+        }
+        // Labelled "To"; otherwise (Mail doesn't always name it) the first text box above Subject that isn't Cc/Bcc.
+        var to = fields.first { isRecipientsLabel($0.label) }
+        if to == nil, let subject, let subjectIndex = fields.firstIndex(where: { $0.id == subject.id }) {
+            to = fields[..<subjectIndex].first { field in
+                field.role != "AXWebArea" && !["cc", "bcc", "from", "reply to"].contains(plain(field))
+                    && !plain(field).contains("body") && !plain(field).contains("message")
+            }
+        }
         let rest = fields.filter { field in
             let name = field.label.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ":")))
             return field.id != to?.id && field.id != subject?.id && name != "cc" && name != "bcc"
@@ -1775,14 +1785,20 @@ enum ScreenPlanValidator {
                 }
                 var parts: [(field: FormField, text: String)] = []
                 var described: [String] = []
-                if let recipients, let box = boxes.to {
-                    // Only addresses the user said: never a guessed one.
-                    let all = MailCompose.addresses(in: recipients)
-                    let said = all.filter { MailCompose.userSaid($0, in: request) }
-                    for left in all where !said.contains(left) { preview.notes.append("Left out “\(left)”: it isn't an address you said") }
-                    if !said.isEmpty {
-                        parts.append((box, said.joined(separator: ", ")))
-                        described.append("To: " + said.joined(separator: ", "))
+                // Only addresses the user said: never a guessed one. When the plan has none
+                // (or only made-up ones), the addresses written in the request itself.
+                let planned = MailCompose.addresses(in: recipients ?? "")
+                var said = planned.filter { MailCompose.userSaid($0, in: request) }
+                for left in planned where !said.contains(left) { preview.notes.append("Left out “\(left)”: it isn't an address you said") }
+                if said.isEmpty { said = MailCompose.addresses(in: request) }
+                var unique: [String] = []
+                for address in said where !unique.contains(where: { $0.lowercased() == address.lowercased() }) { unique.append(address) }
+                if !unique.isEmpty {
+                    if let box = boxes.to {
+                        parts.append((box, unique.joined(separator: ", ")))
+                        described.append("To: " + unique.joined(separator: ", "))
+                    } else {
+                        preview.notes.append("Couldn't find the To box: add \(unique.joined(separator: ", ")) yourself")
                     }
                 }
                 if let subject, let box = boxes.subject {
