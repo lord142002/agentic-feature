@@ -1181,10 +1181,13 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             writeFromScreen(transcript, into: target, apiKey: key)
             return
         }
-        if allowForm, let target = lastExternalApp, !target.isTerminated,
+        // An email asked for in a compose window (even when routed as plain
+        // writing): fill To, Subject and the message body separately.
+        let emailRequest = MailCompose.isEmailRequest(transcript)
+        if allowForm || emailRequest, let target = lastExternalApp, !target.isTerminated,
            let key = ClaudeAPI.apiKey(fallback: configuration.anthropicAPIKey), !key.isEmpty {
             let fields = formScanner.fields(in: target)
-            if fields.count >= 2 {
+            if fields.count >= 2, allowForm || MailCompose.isComposeWindow(labels: fields.map(\.label)) {
                 fillForm(transcript, in: target, fields: fields, apiKey: key)
                 return
             }

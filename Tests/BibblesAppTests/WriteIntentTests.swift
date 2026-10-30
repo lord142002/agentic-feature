@@ -105,3 +105,22 @@ final class FixTests: XCTestCase {
         XCTAssertFalse(ClaudeFixer.looksLikeCode("Dear HR, I am writing to resign."))
     }
 }
+
+final class MailComposeTests: XCTestCase {
+    func testEmailRequestsAreDetected() {
+        XCTAssertTrue(MailCompose.isEmailRequest("write a mail to my friend email: soham@gmail.com and ask about his health"))
+        XCTAssertTrue(MailCompose.isEmailRequest("Write an email to my boss about Friday"))
+        XCTAssertTrue(MailCompose.isEmailRequest("reply to Soham.K@work.co.in saying yes"))
+        XCTAssertFalse(MailCompose.isEmailRequest("write a short story about a dragon"))
+        XCTAssertFalse(MailCompose.isEmailRequest("write a poem about mailboxes"))
+    }
+
+    func testComposeWindowsAreDetected() {
+        XCTAssertTrue(MailCompose.isComposeWindow(labels: ["To:", "Cc:", "Subject:", "Message body"]))
+        XCTAssertTrue(MailCompose.isComposeWindow(labels: ["To recipients", "Subject", "Message Body"]))
+        XCTAssertTrue(MailCompose.isComposeWindow(labels: ["To", "Add a subject", "Main text area"]))
+        XCTAssertFalse(MailCompose.isComposeWindow(labels: ["Message body"]))
+        XCTAssertFalse(MailCompose.isComposeWindow(labels: ["Title", "Tomorrow's notes", "Main text area"]))
+        XCTAssertFalse(MailCompose.isComposeWindow(labels: ["Name", "Email", "Subject"]))
+    }
+}
