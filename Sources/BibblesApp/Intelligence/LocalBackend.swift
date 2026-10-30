@@ -546,7 +546,8 @@ final class LocalCostLog {
         let answered = object?["model"] as? String
         let usage = Self.usage(in: reply)
         let cost = ((object?["usage"] as? [String: Any])?["cost"] as? NSNumber)?.doubleValue
-        let label = answered.map { $0 == model ? model : model + " → " + $0 } ?? model
+        // "typesafe/jev-1.14-20261014" is the dated snapshot of the same model, not another one.
+        let label = answered.map { $0.hasPrefix(model) ? model : model + " → " + $0 } ?? model
         record(Entry(date: Date(), feature: "router", model: label, inputTokens: usage.input, outputTokens: usage.output,
                      cost: cost, milliseconds: milliseconds))
     }

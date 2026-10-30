@@ -63,6 +63,12 @@ enum ModelCatalog {
     static let gpt5Mini = ModelChoice(id: "openai/gpt-5-mini", provider: .openrouter,
                                       name: "GPT-5 mini", inputPerMillion: 0.25, outputPerMillion: 2.00,
                                       acceptsTemperature: false)
+    /// TypeSafe's Jev on OpenRouter (router option, Local mode only): a decision model,
+    /// not a chat model. It picks the route itself in one call (OpenRouter's Decisions API).
+    /// Billed on input only. Pinned release; `~typesafe/jev-latest` is an alias.
+    static let jev = ModelChoice(id: "typesafe/jev-1.14", provider: .openrouter,
+                                 name: "Jev 1.14 (TypeSafe)", inputPerMillion: 0.042, outputPerMillion: 0,
+                                 acceptsTemperature: false)
     /// TypeSafe's Jev Router on OpenRouter (router option, Local mode only): Jev picks
     /// a model for each request; the price is that model's (-1 = variable, from the reply).
     static let jevRouter = ModelChoice(id: "typesafe/jev-router", provider: .openrouter,
@@ -80,7 +86,7 @@ enum ModelCatalog {
     static let textToSpeechOutputPerMillion = 6.00
     static let deepgramModel = "nova-3"
 
-    static let all: [ModelChoice] = [deepSeekFlash, haiku45, haiku55, sonnet55, gpt5Mini, gemini38Flash]
+    static let all: [ModelChoice] = [deepSeekFlash, haiku45, haiku55, sonnet55, gpt5Mini, gemini38Flash, jev]
 
     // MARK: Choices
 
@@ -88,7 +94,7 @@ enum ModelCatalog {
         switch feature {
         case .light: return [deepSeekFlash]
         case .deep: return [sonnet55]
-        case .router: return [haiku45, jevRouter]
+        case .router: return [haiku45, jev, jevRouter]
         case .agentPlanner: return [gpt5Mini, haiku55, gemini38Flash, haiku45, sonnet55]
         case .agentBackup: return [haiku45, haiku55]
         // GPT-5 mini: cheapest reliable screen planner in testing (2026-10-29).

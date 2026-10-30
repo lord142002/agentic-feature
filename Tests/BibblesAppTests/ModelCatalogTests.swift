@@ -33,7 +33,8 @@ final class ModelCatalogTests: XCTestCase {
     }
 
     func testJevRouterIsARouterOptionThroughOpenRouter() {
-        XCTAssertEqual(ModelCatalog.choices(for: .router).map(\.id), ["claude-haiku-4-5-20251001", "typesafe/jev-router"])
+        XCTAssertEqual(ModelCatalog.choices(for: .router).map(\.id),
+                       ["claude-haiku-4-5-20251001", "typesafe/jev-1.14", "typesafe/jev-router"])
         XCTAssertEqual(ModelCatalog.jevRouter.provider, .openrouter)
         XCTAssertNil(ModelCatalog.estimatedCost(model: "typesafe/jev-router", inputTokens: 100, outputTokens: 10),
                      "its price varies: the cost log uses OpenRouter's own figure")
@@ -43,6 +44,31 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual((body["response_format"] as? [String: Any])?["type"] as? String, "json_object")
         XCTAssertEqual((body["messages"] as? [[String: Any]])?.map { $0["role"] as? String }, ["system", "user"],
                        "no pre-filled assistant answer on OpenRouter")
+    }
+
+    func testJevDecidesTheRouteItself() {
+        var client = RouterClient(key: "sk-or-test")
+        client.openRouterModel = ModelCatalog.jev.id
+        XCTAssertTrue(client.usesDecisionsAPI)
+        let request = try? client.urlRequest(text: "export this to pdf", flags: RouterFlags())
+        XCTAssertEqual(request?.url, HybridRouter.decisionsURL)
+        client.openRouterModel = ModelCatalog.jevRouter.id
+        XCTAssertFalse(client.usesDecisionsAPI, "Jev Router uses the chat endpoint")
+
+        // One Choice question; the options are the router prompt's routes.
+        let body = HybridRouter.decisionsBody(model: "typesafe/jev-1.14", text: "export this to pdf", flags: RouterFlags())
+        let question = (body["questions"] as? [String: Any])?["route"] as? [String: Any]
+        XCTAssertEqual(question?["type"] as? String, "choice")
+        let options = Set((question?["criteria"] as? [String: String])?.keys.map { $0 } ?? [])
+        XCTAssertTrue(options.isSuperset(of: ["simple", "write", "screen", "command", "unclear"]), "\(options)")
+        XCTAssertEqual((body["state"] as? [String: Any])?["request"] as? String, "export this to pdf")
+
+        // The answer: the chosen route with its own probability.
+        let reply = #"{"model":"typesafe/jev-1.14-20261014","answers":{"route":{"type":"choice","choice":"command","confidence":0.67,"probabilities":{"command":0.91,"screen":0.09}}},"usage":{"input_tokens":900,"output_tokens":5,"cost":0.0000378}}"#
+        let result = HybridRouter.parseDecision(Data(reply.utf8))
+        XCTAssertEqual(result?.route, .command)
+        XCTAssertEqual(result?.confidence ?? 0, 0.91, accuracy: 0.001)
+        XCTAssertNil(HybridRouter.parseDecision(Data(#"{"answers":{"route":{"choice":"fly"}}}"#.utf8)))
     }
 
     func testOnlyPinnedIDs() {
