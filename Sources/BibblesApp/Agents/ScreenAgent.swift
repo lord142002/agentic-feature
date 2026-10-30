@@ -232,7 +232,10 @@ enum ScreenPlanParser {
         }
         name = actionAliases[name] ?? name
         object["action"] = name
-        if name == "switch_app", object["app"] == nil { object["app"] = object["name"] ?? object["target"] }
+        if name == "switch_app", object["app"] == nil {
+            object["app"] = object["name"] ?? object["target"] ?? object["label"] ?? object["value"] ?? object["text"]
+                ?? (object["input"] as? [String: Any])?["name"]
+        }
         if name == "remember", object["text"] == nil { object["text"] = object["value"] ?? object["note"] }
         if name == "attach" || name == "open_file", object["name"] == nil { object["name"] = object["file"] ?? object["target"] }
         if object["x"] == nil, let pair = object["coordinate"] as? [Any] ?? object["coordinates"] as? [Any], pair.count == 2 {
@@ -244,7 +247,15 @@ enum ScreenPlanParser {
             object["y"] = point["y"]
         }
         if name == "key", object["keys"] == nil { object["keys"] = object["key"] ?? object["shortcut"] }
-        if name == "type", object["text"] == nil { object["text"] = object["value"] ?? object["content"] }
+        if name == "type", object["text"] == nil {
+            object["text"] = object["value"] ?? object["content"] ?? object["message"] ?? object["body"] ?? object["string"]
+        }
+        // "type" into a named box is a fill: it goes into that box, not wherever the cursor is.
+        if name == "type", let field = object["field"] as? String, !field.trimmingCharacters(in: .whitespaces).isEmpty,
+           let typed = object["text"] as? String {
+            object["action"] = "fill"
+            object["value"] = typed
+        }
         if name == "press", object["target"] == nil { object["target"] = object["label"] ?? object["button"] }
         return object
     }
@@ -269,7 +280,8 @@ enum ScreenPlanParser {
                                        "drag": "start and end points", "scroll": "a direction",
                                        "switch_app": "an app name", "remember": "text", "attach": "a file name",
                                        "open_file": "a file name"]
-        return "“\(name)” is missing \(needs[name] ?? "details")"
+        let had = raw.filter { !($0.value is NSNull) }.keys.filter { $0 != "action" }.sorted().prefix(5).joined(separator: ", ")
+        return "“\(name)” is missing \(needs[name] ?? "details")" + (had.isEmpty ? "" : " (it had: \(had))")
     }
 
     /// {"x","y"} or {"key"}, plus optional "keys"/"points" pressed together,
@@ -1588,7 +1600,12 @@ enum ScreenPlanValidator {
                     drop(index, "no “\(label)” field on screen"); continue
                 }
                 if MyDetailsMatcher.isNeverFill(field.label) { drop(index, "Bibbles never fills “\(field.label)”"); continue }
-                switch resolve(value, details: details, request: requestFolded) {
+                // In an email, the subject and message may be new text (you see it first);
+                // recipients are only addresses you said.
+                let fieldName = ScreenAX.normalized(field.label)
+                let isRecipients = ["to", "cc", "bcc"].contains(fieldName) || fieldName.hasPrefix("to ") || fieldName.contains("recipient")
+                let newTextAllowed = MailCompose.isComposeWindow(labels: snapshot.fields.map(\.label)) && !isRecipients
+                switch resolve(value, details: details, request: requestFolded, allowNewText: newTextAllowed) {
                 case .failure(let problem): drop(index, problem.reason)
                 case .success(let text):
                     add(.fill(field: field, text: text), "Type “\(text)” into “\(field.label)”")
@@ -1788,6 +1805,7 @@ enum ScreenAgentPrompt {
         - remember {"text":"Invoice total: ₹4,250"}: keeps a fact you can see now for later steps in another app (it appears in "Already done"). Copy it exactly from the screen; never guess.
         - open_file {"name":"holi7","folder":"Downloads"}: opens a file on the Mac in its usual app. name = words of the file name the user said; folder only when the user said it. Make it the LAST step and set "done": false.
         - attach {"name":"resume","folder":"Downloads"}: attaches the newest file whose name has these words. In Apple Mail just click the message body first. On websites (Gmail, Outlook) first click the paperclip / "Attach files" button in one answer, then "attach" in the same answer right after it: Bibbles fills the file window. Bibbles finds the file on the Mac; never write a path.
+        To put text into a listed field (To, Subject, a form field), use fill with its exact label, e.g. fill {"field":"To:","value":"sam@x.com"} and fill {"field":"Subject:","value":"Invoice total"}. Use click + type only for a message body or a box that isn't listed.
         Positions: the description gives "@ x,y" (0-1000 on the screenshot) for buttons and fields it can see. Use those numbers for clicks: they are exact. When a button is listed, click it with its exact name as the label.
         - mac {"tool":"open_website","input":{"url":"https://…"}} | set_dark_mode {"mode":"on|off|toggle"} | set_volume {"action":"set|up|down|mute|unmute","level":0-100} | set_brightness {"action":"up|down"} | open_app {"name"}.
         Prefer menu, press, fill and save (exact) over click (approximate). For Mac-wide dark mode, volume or brightness use one mac step.

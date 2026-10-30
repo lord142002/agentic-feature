@@ -45,6 +45,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     private var executor: ScreenExecutor?
     private var result = ScreenRunResult()
     private var planDone = true
+    /// Why steps were skipped, over all parts (shown at the end).
+    private var skipped: [String] = []
     private var startedAt = Date()
     private var finishedAt: Date?
     private var work: Task<Void, Never>?
@@ -98,6 +100,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         work?.cancel()
         round = 1
         history = []
+        skipped = []
         result = ScreenRunResult()
         startedAt = Date()
         log = AgentLogEntry(route: "agent_screen", layer: layer)
@@ -193,6 +196,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 self.log.stepsDropped += preview.dropped.count
                 self.log.stepsValid += preview.actions.count
                 // After switching apps or opening a file, always look at the new window.
+                self.skipped += preview.dropped.map(\.reason)
                 self.planDone = plan.done && !(preview.actions.last?.changesApp ?? false) && !preview.looksAgain
                 if !plan.summary.isEmpty { self.planSummary = plan.summary }
                 self.preview = preview
@@ -310,6 +314,9 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         if result.filled > 0 { sentences.append("Filled \(result.filled) field\(result.filled == 1 ? "" : "s").") }
         let other = result.done - result.filled - result.failed
         if other > 0 { sentences.append("Did \(other) step\(other == 1 ? "" : "s")" + (round > 1 ? " in \(round) parts." : ".")) }
+        if !skipped.isEmpty {
+            sentences.append("Skipped \(skipped.count) step\(skipped.count == 1 ? "" : "s"): \(skipped[0]).")
+        }
         if let problem = result.firstError { sentences.append("Stopped: \(problem).") }
         else if result.stopped { sentences.append(strings.stopped(result.done, result.total)) }
         resultSummary = sentences.isEmpty ? strings.nothing : sentences.joined(separator: " ")

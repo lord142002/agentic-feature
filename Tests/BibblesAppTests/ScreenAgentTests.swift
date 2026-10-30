@@ -504,6 +504,31 @@ final class ScreenAgentTests: XCTestCase {
     }
 
     @MainActor
+    func testMailBoxesAreFilledByName() {
+        // Slips seen in Mail: "type" into a named box, and switch_app with the name in another field.
+        let text = #"{"summary":"","done":false,"steps":[{"action":"type","field":"Subject:","text":"Invoice total"},{"action":"switch_app","label":"Mail"},{"action":"type","label":"To:"}]}"#
+        let parsed = ScreenPlanParser.parse(text)
+        XCTAssertEqual(parsed.plan?.steps, [.fill(field: "Subject:", value: "Invoice total"), .switchApp("Mail")])
+        XCTAssertTrue(parsed.dropped.first?.reason.contains("(it had: label)") == true, "the reason says what the step had")
+
+        let compose = snapshot(fields: [field(1, "To:"), field(2, "Cc:"), field(3, "Subject:")])
+        let request = "take the total from this invoice and email it to soham@gmail.com"
+        let plan = ScreenPlan(summary: "", steps: [.fill(field: "To:", value: "soham@gmail.com"),
+                                                   .fill(field: "Subject:", value: "Invoice total: £600.00"),
+                                                   .fill(field: "Cc:", value: "boss@company.com")])
+        let preview = ScreenPlanValidator.preview(plan, snapshot: compose, request: request, details: me)
+        XCTAssertEqual(preview.lines.map(\.text), ["Type “soham@gmail.com” into “To:”", "Type “Invoice total: £600.00” into “Subject:”"],
+                       "a subject may be new text in an email")
+        XCTAssertEqual(preview.dropped.map(\.index), [2], "recipients are only addresses the user said")
+
+        // Outside an email window, fields still take only the user's words.
+        let form = snapshot(fields: [field(1, "Name"), field(2, "Company")])
+        let strict = ScreenPlanValidator.preview(ScreenPlan(summary: "", steps: [.fill(field: "Company", value: "Acme Ltd")]),
+                                                 snapshot: form, request: "fill this form", details: me)
+        XCTAssertTrue(strict.actions.isEmpty)
+    }
+
+    @MainActor
     func testParsesNewSteps() {
         let text = #"{"summary":"x","done":false,"steps":[{"action":"scroll","direction":"down","amount":4},{"action":"scroll_up"},{"action":"remember","text":"Total: ₹4,250"},{"action":"attach","name":"resume","folder":"Downloads"},{"action":"open_file","file":"holi7"},{"action":"switch_app","app":"Mail"},{"action":"scroll","direction":"sideways"}]}"#
         let parsed = ScreenPlanParser.parse(text)
