@@ -197,7 +197,12 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 self.log.stepsValid += preview.actions.count
                 // After switching apps or opening a file, always look at the new window.
                 self.skipped += preview.dropped.map(\.reason)
-                self.planDone = plan.done && !(preview.actions.last?.changesApp ?? false) && !preview.looksAgain
+                // (A filled new email is finished as it is: looking again could write it twice.)
+                let lookAtNewApp = preview.actions.last.map { action -> Bool in
+                    if case .mailto = action { return false }
+                    return action.changesApp
+                } ?? false
+                self.planDone = plan.done && !lookAtNewApp && !preview.looksAgain
                 if !plan.summary.isEmpty { self.planSummary = plan.summary }
                 self.preview = preview
                 if preview.isEmpty, !isFirst {

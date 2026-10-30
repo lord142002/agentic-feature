@@ -549,6 +549,29 @@ final class ScreenAgentTests: XCTestCase {
     }
 
     @MainActor
+    func testEmailFromAnyAppOpensAFilledNewMessage() {
+        // In Preview, with no email window: one step opens a new message with every part filled in.
+        let request = "take the total from this image and open apple mail to email it to \"mohit55599@gmail.com” and greet Mohit"
+        let plan = ScreenPlan(summary: "", steps: [.remember("Total: £600.00"),
+                                                   .composeEmail(recipients: nil, subject: "Invoice — £600.00", body: "Hi Mohit,\nHow are you?")])
+        let preview = ScreenPlanValidator.preview(plan, snapshot: snapshot(), request: request, details: me)
+        guard case .mailto(let url)? = preview.actions.last else { return XCTFail("a filled new message") }
+        let link = url.absoluteString
+        XCTAssertTrue(link.hasPrefix("mailto:mohit55599@gmail.com?subject=Invoice%20"), link)
+        XCTAssertTrue(link.contains("body=Hi%20Mohit%2C%0D%0AHow%20are%20you%3F"), link)
+        XCTAssertFalse(link.contains("+"))
+        XCTAssertTrue(preview.lines.last?.text.hasPrefix("New email in your mail app — To: mohit55599@gmail.com") == true)
+        XCTAssertTrue(preview.needsApproval)
+        XCTAssertTrue(ScreenAction.mailto(url).changesApp)
+
+        // switch_app with no name: the app named in the request.
+        XCTAssertEqual(ScreenPlanParser.parse(#"{"summary":"","steps":[{"action":"switch_app"}]}"#).plan?.steps, [.switchApp("")])
+        XCTAssertEqual(ScreenApps.mentioned(in: request, among: ["Preview", "Mail", "Messages", "Terminal"]), "Mail")
+        XCTAssertNil(ScreenApps.mentioned(in: "send this by email", among: ["Mail", "Notes"]), "\"email\" is not the Mail app")
+        XCTAssertNil(ScreenApps.mentioned(in: "open terminal", among: ["Terminal"]))
+    }
+
+    @MainActor
     func testMailBoxesAreFilledByName() {
         // Slips seen in Mail: "type" into a named box, and switch_app with the name in another field.
         let text = #"{"summary":"","done":false,"steps":[{"action":"type","field":"Subject:","text":"Invoice total"},{"action":"switch_app","label":"Mail"},{"action":"type","label":"To:"}]}"#
