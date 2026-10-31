@@ -1,0 +1,133 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0b0a12;
+    --card: #0f0e18;
+    --border: #262338;
+    --accent: #b9a8ff;
+    --accent-strong: #8f7af0;
+    --text: #f1eefc;
+    --muted: #9a96ad;
+    --chip: #1d1933;
+    --chip-text: #c4b8ff;
+    --new: #2a2350;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", sans-serif;
+    width: 1600px;
+    padding: 64px 56px 56px;
+  }
+  .title { text-align: center; margin-bottom: 48px; }
+  .title h1 { font-family: "Liberation Serif", serif; font-weight: 400; font-size: 54px; letter-spacing: -0.5px; }
+  .title p { color: var(--muted); font-size: 19px; margin-top: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; align-items: start; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 26px;
+    padding: 40px 38px 38px;
+  }
+  .card.popular { border: 1.5px solid var(--accent-strong); margin-top: -16px; padding-top: 52px; padding-bottom: 50px; }
+  .chip {
+    display: inline-block;
+    background: var(--chip);
+    color: var(--chip-text);
+    border: 1px solid #3a3266;
+    border-radius: 999px;
+    padding: 7px 16px;
+    font-size: 13px;
+    letter-spacing: 2.4px;
+    text-transform: uppercase;
+  }
+  .name { font-family: "Liberation Serif", serif; font-size: 42px; margin-top: 26px; letter-spacing: -0.5px; }
+  .price { font-family: "Liberation Serif", serif; font-size: 76px; color: var(--accent); margin-top: 10px; line-height: 1; }
+  .per { color: var(--muted); font-size: 18px; margin-top: 10px; }
+  .desc { color: var(--muted); font-size: 18px; line-height: 1.6; margin-top: 30px; min-height: 58px; }
+  ul { list-style: none; margin-top: 30px; }
+  li { display: flex; align-items: center; gap: 14px; font-size: 19px; padding: 9px 0; }
+  .tick { color: var(--accent-strong); font-weight: 700; width: 18px; flex-shrink: 0; }
+  li.new {
+    background: var(--new);
+    border: 1px solid #4a3f8a;
+    border-radius: 12px;
+    padding: 11px 12px;
+    margin: 6px -12px;
+  }
+  .badge {
+    margin-left: auto;
+    background: var(--accent);
+    color: #17122e;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    border-radius: 999px;
+    padding: 4px 9px;
+  }
+  .note { color: var(--muted); font-size: 14px; text-align: center; margin-top: 34px; }
+</style>
+</head>
+<body>
+  <div class="title">
+    <h1>Bibbles plans</h1>
+    <p>Now with agent tasks: Bibbles does it for you, in your apps.</p>
+  </div>
+  <div class="grid">
+    <div class="card">
+      <span class="chip">Starter</span>
+      <div class="name">Alpha</div>
+      <div class="price">$0</div>
+      <div class="per">forever</div>
+      <div class="desc">For trying Bibbles out. Everyday questions, quick dictation and a taste of screen help.</div>
+      <ul>
+        <li><span class="tick">✓</span>30 AI asks a month</li>
+        <li><span class="tick">✓</span>10 deep tasks a month</li>
+        <li class="new"><span class="tick">✓</span>5 agent tasks a month<span class="badge">NEW</span></li>
+        <li><span class="tick">✓</span>5 screen help uses a month</li>
+        <li><span class="tick">✓</span>30 minutes of dictation a month</li>
+        <li><span class="tick">✓</span>10 web searches a month</li>
+        <li><span class="tick">✓</span>Community support</li>
+      </ul>
+    </div>
+    <div class="card popular">
+      <span class="chip">Most popular</span>
+      <div class="name">Sigma</div>
+      <div class="price">$20</div>
+      <div class="per">per month</div>
+      <div class="desc">For everyday work. Fast, smart AI that steps up automatically for harder tasks.</div>
+      <ul>
+        <li><span class="tick">✓</span>400 AI asks a month</li>
+        <li><span class="tick">✓</span>Smart AI, with 70 deep tasks a month</li>
+        <li class="new"><span class="tick">✓</span>250 agent tasks a month<span class="badge">NEW</span></li>
+        <li><span class="tick">✓</span>500 screen help uses a month</li>
+        <li><span class="tick">✓</span>~2,000 minutes of dictation a month</li>
+        <li><span class="tick">✓</span>300 web searches a month</li>
+        <li><span class="tick">✓</span>Community support</li>
+      </ul>
+    </div>
+    <div class="card">
+      <span class="chip">Power users</span>
+      <div class="name">Omega</div>
+      <div class="price">$70</div>
+      <div class="per">per month</div>
+      <div class="desc">For power users. The same smart AI with the most deep tasks and far higher limits than Sigma.</div>
+      <ul>
+        <li><span class="tick">✓</span>Everything in Sigma</li>
+        <li><span class="tick">✓</span>1,500 AI asks a month</li>
+        <li><span class="tick">✓</span>300 deep tasks a month</li>
+        <li class="new"><span class="tick">✓</span>1,800 agent tasks a month<span class="badge">NEW</span></li>
+        <li><span class="tick">✓</span>1,000 screen help uses a month</li>
+        <li><span class="tick">✓</span>Unlimited dictation*</li>
+        <li><span class="tick">✓</span>1,000 web searches a month</li>
+        <li><span class="tick">✓</span>Priority support</li>
+      </ul>
+    </div>
+  </div>
+  <div class="note">* Fair use applies. Agent tasks: Bibbles clicks, types, fills and sends in your apps for you, and asks before anything final.</div>
+</body>
+</html>
