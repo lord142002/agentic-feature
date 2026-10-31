@@ -60,9 +60,10 @@ struct LocalBackend: Backend {
 
     static let lightMaxTokens = 4_096
     static let deepMaxTokens = 8_192
-    /// How hard deep tasks think (all deep requests: chat, streamed chat, screen questions).
-    /// "medium": less thinking than the models' "high" default, so faster and cheaper output.
-    static let deepEffort = "medium"
+    /// How hard deep tasks think (all deep requests: chat, streamed chat, screen questions):
+    /// the router's choice for this request, low or medium (medium when unsure). Both
+    /// are below the models' "high" default, so faster and cheaper output.
+    static var deepEffort: String { DeepEffort.current.rawValue }
 
     /// Anthropic deep request: the effort setting (Sonnet 5.5 keeps adaptive thinking).
     static func withDeepEffort(_ body: [String: Any]) -> [String: Any] {
@@ -102,7 +103,7 @@ struct LocalBackend: Backend {
                                                          maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: false,
                                                          search: false, key: Self.key(.openrouter), effort: Self.deepEffort)
             let data = try await Self.send(request, provider: "OpenRouter", slot: .openrouter, session: session)
-            LocalCostLog.shared.record(feature: "chat deep", model: model, reply: data, started: started)
+            LocalCostLog.shared.record(feature: "chat deep (\(Self.deepEffort))", model: model, reply: data, started: started)
             return try WorkerAPI.parseChat(data, mode: mode)
         }
         if mode == .deep {
@@ -112,7 +113,7 @@ struct LocalBackend: Backend {
                                                               stream: false, search: false))
             let data = try await Self.send(Self.anthropicRequest(body: body, key: Self.key(.anthropic)),
                                            provider: "Anthropic", slot: .anthropic, session: session)
-            LocalCostLog.shared.record(feature: "chat deep", model: model, reply: data, started: started)
+            LocalCostLog.shared.record(feature: "chat deep (\(Self.deepEffort))", model: model, reply: data, started: started)
             return try WorkerAPI.parseChat(data, mode: mode)
         }
         let search = mode == .search
@@ -145,7 +146,7 @@ struct LocalBackend: Backend {
                                                          search: false, key: Self.key(.openrouter), effort: Self.deepEffort)
             let result = try await Self.stream(request, provider: "OpenRouter", slot: .openrouter, session: session,
                                                onUpdate: onUpdate)
-            LocalCostLog.shared.recordLastUsage(feature: "chat deep", model: model, started: started)
+            LocalCostLog.shared.recordLastUsage(feature: "chat deep (\(Self.deepEffort))", model: model, started: started)
             return result
         }
         if mode == .deep {
@@ -155,7 +156,7 @@ struct LocalBackend: Backend {
                                                               stream: true, search: false))
             let result = try await Self.stream(Self.anthropicRequest(body: body, key: Self.key(.anthropic), stream: true),
                                                provider: "Anthropic", slot: .anthropic, session: session, onUpdate: onUpdate)
-            LocalCostLog.shared.recordLastUsage(feature: "chat deep", model: model, started: started)
+            LocalCostLog.shared.recordLastUsage(feature: "chat deep (\(Self.deepEffort))", model: model, started: started)
             return result
         }
         let search = mode == .search
@@ -200,7 +201,7 @@ struct LocalBackend: Backend {
             let data = try await Self.send(Self.openRouterRequest(path: "chat/completions", json: openRouter,
                                                                   key: Self.key(.openrouter)),
                                            provider: "OpenRouter", slot: .openrouter, session: session)
-            LocalCostLog.shared.record(feature: "vision deep", model: model, reply: data, started: started)
+            LocalCostLog.shared.record(feature: "vision deep (\(Self.deepEffort))", model: model, reply: data, started: started)
             return data
         }
         if tier == .deep {
@@ -208,7 +209,7 @@ struct LocalBackend: Backend {
             let anthropic = Self.withDeepEffort(Self.anthropicVisionBody(request, model: model, cap: Self.deepMaxTokens))
             let data = try await Self.send(Self.anthropicRequest(body: anthropic, key: Self.key(.anthropic)),
                                            provider: "Anthropic", slot: .anthropic, session: session)
-            LocalCostLog.shared.record(feature: "vision deep", model: model, reply: data, started: started)
+            LocalCostLog.shared.record(feature: "vision deep (\(Self.deepEffort))", model: model, reply: data, started: started)
             return data
         }
         return try await Self.withLightBackup(primary: {

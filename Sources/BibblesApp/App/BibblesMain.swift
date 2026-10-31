@@ -933,6 +933,8 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     private func dispatch(_ intent: BibblesIntent, transcript: String) {
         #if BIBBLES_DEVELOPER
         if intent != .dictate, handleAgentVoiceCommand(transcript) { return }
+        // A new request: deep-task effort starts at medium until the router says otherwise.
+        DeepEffort.current = .medium
         #endif
         if intent != .dictate { stopWalkthrough() }
         var intent = intent
@@ -977,6 +979,10 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             // Escape or a new request while deciding: do nothing.
             guard self.isCurrentContextPreparation(preparation) else { return }
             self.contextPreparationTask = nil
+            #if BIBBLES_DEVELOPER
+            // The router's thinking level for a deep answer (used only by deep requests).
+            if let effort = decision.routerEffort { DeepEffort.current = effort }
+            #endif
             let ran = self.runRouted(decision, intent: intent, transcript: transcript, hereWrite: hereWrite)
             ToolGateLog.shared.recordRouting(decision, text: transcript, finalRoute: ran.route, tier: ran.tier)
         }
@@ -1261,6 +1267,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     }
 
     private func submitFromChat(_ text: String, documents: [ChatDocument], searchWeb: Bool = false) -> Bool {
+        #if BIBBLES_DEVELOPER
+        DeepEffort.current = .medium   // chat messages don't go through the router
+        #endif
         pendingVisualQuestion = nil
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty || !documents.isEmpty else { return false }
@@ -1315,6 +1324,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
 
     @discardableResult
     private func submitFocusedQuestion(_ transcript: String) -> Bool {
+        #if BIBBLES_DEVELOPER
+        DeepEffort.current = .medium   // circled questions don't go through the router
+        #endif
         guard let capture = focusCaptureTask else { return false }
         focusCaptureTask = nil
         let point = focusPoint

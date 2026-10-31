@@ -102,13 +102,23 @@ enum RouterPrompt {
     static var system: String {
         #if BIBBLES_DEVELOPER
         let prompt = AgentSettings.filesEnabled ? withFilesAgent : base
-        return AgentSettings.screenEnabled ? withScreenAgent(prompt) : prompt
+        let withAgents = AgentSettings.screenEnabled ? withScreenAgent(prompt) : prompt
+        return LocalMode.isOn ? withEffort(withAgents) : withAgents
         #else
         return base
         #endif
     }
 
     #if BIBBLES_DEVELOPER
+    /// Local mode: the router also says how hard a deep answer should think.
+    static func withEffort(_ prompt: String) -> String {
+        prompt.replacingOccurrences(of: #"Reply with JSON only: {"route":"<route>","confidence":<0.0-1.0>}"#,
+                                    with: #"Reply with JSON only: {"route":"<route>","confidence":<0.0-1.0>,"effort":"low|medium"}"#)
+            + "\nEffort: low when the answer is clearly simple (describe or explain what is on screen, a definition, a short fact, "
+            + "a summary); medium when it needs careful reasoning (multi-step maths or logic, debugging, comparisons, analysis, planning). "
+            + "When unsure, medium."
+    }
+
     /// Developer builds with "AI Agents (Files)" on: organising MANY files is
     /// its own route; single-file actions stay `file_action`.
     static let withFilesAgent = base

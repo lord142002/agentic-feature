@@ -54,6 +54,31 @@ struct RouterFlags: Equatable {
 struct RouterResult: Equatable {
     let route: HybridRoute
     let confidence: Double
+    /// How hard a deep task should think (Local mode routers only; nil = not given or unsure).
+    var effort: DeepEffort? = nil
+}
+
+/// The thinking level for deep tasks, chosen per request by the router (Local
+/// mode). Only "low" and "medium"; anything unsure stays "medium". Used only by
+/// deep requests: light tasks, agents and the router ignore it.
+enum DeepEffort: String, CaseIterable {
+    case low, medium
+
+    private static let lock = NSLock()
+    private static var stored = DeepEffort.medium
+
+    /// The level for the next deep request. Every new request resets it first.
+    static var current: DeepEffort {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
+
+    /// The router's level is used only when the router was sure enough of it.
+    static func from(_ name: String?, probability: Double = 1) -> DeepEffort? {
+        guard let name, let effort = DeepEffort(rawValue: name.trimmingCharacters(in: .whitespaces).lowercased()),
+              probability >= HybridRouter.acceptThreshold else { return nil }
+        return effort
+    }
 }
 
 /// Where the final route came from (developer log).
@@ -78,6 +103,8 @@ struct RoutingDecision: Equatable {
     var keywordStrength: IntentRouter.Strength
     var routerRoute: HybridRoute?
     var routerConfidence: Double?
+    /// The router's deep-task effort (Local mode), nil when not given or unsure.
+    var routerEffort: DeepEffort?
     var routerMilliseconds: Int?
     var jsonParsed: Bool?
     /// Developer-only reason, never the user's words.
@@ -132,6 +159,18 @@ enum HybridRouter {
             "model": model,
             "state": ["request": String(text.prefix(4_000)), "mac": flagFacts] as [String: Any],
             "questions": [
+                // Asked in the same call; Jev answers each question on its own.
+                "effort": [
+                    "type": "choice",
+                    "instructions": "If this request needs a careful written answer, how much thinking does it need? "
+                        + "Pick low only when the answer is clearly simple.",
+                    "criteria": [
+                        "low": "Simple: describe or explain what is visible on screen, a definition, a short fact, a summary, "
+                            + "a straightforward explanation or rewrite.",
+                        "medium": "Needs careful reasoning: multi-step maths or logic, debugging code, comparisons, analysis, "
+                            + "planning, or anything where a mistake is likely without thinking."
+                    ]
+                ] as [String: Any],
                 "route": [
                     "type": "choice",
                     "instructions": "Bibbles is a voice and text assistant for Mac. Which single task does the user want Bibbles to do NOW? "
@@ -153,7 +192,13 @@ enum HybridRouter {
         let probability = ((answer["probabilities"] as? [String: Any])?[name] as? NSNumber)?.doubleValue
             ?? (answer["confidence"] as? NSNumber)?.doubleValue ?? 0
         guard probability.isFinite else { return nil }
-        return RouterResult(route: route, confidence: min(1, max(0, probability)))
+        let answers = object["answers"] as? [String: Any]
+        let effortAnswer = answers?["effort"] as? [String: Any]
+        let effortName = effortAnswer?["choice"] as? String
+        let effortProbability = effortName.flatMap { ((effortAnswer?["probabilities"] as? [String: Any])?[$0] as? NSNumber)?.doubleValue }
+            ?? (effortAnswer?["confidence"] as? NSNumber)?.doubleValue ?? 0
+        return RouterResult(route: route, confidence: min(1, max(0, probability)),
+                            effort: DeepEffort.from(effortName, probability: effortProbability))
     }
 
     /// OpenRouter's chat format: no pre-filled answer, so the JSON is asked for instead.
@@ -397,6 +442,7 @@ enum HybridRouter {
                 decision.jsonParsed = outcome.jsonParsed
                 decision.routerRoute = outcome.result?.route
                 decision.routerConfidence = outcome.result?.confidence
+                decision.routerEffort = outcome.result?.effort
                 if let accepted = accept(outcome.result) {
                     decision.source = .router
                     decision.override = accepted
@@ -443,7 +489,8 @@ enum HybridRouter {
             let confidence = (object["confidence"] as? NSNumber)?.doubleValue
                 ?? Double(object["confidence"] as? String ?? "") ?? 0
             guard confidence.isFinite else { return nil }
-            return RouterResult(route: route, confidence: min(1, max(0, confidence)))
+            return RouterResult(route: route, confidence: min(1, max(0, confidence)),
+                                effort: DeepEffort.from(object["effort"] as? String))
         }
         // Last resort: pull both fields out with patterns (broken JSON).
         guard let routeMatch = text.range(of: #"(?i)"?route"?\s*[:=]\s*"?([a-z_]+)"#, options: .regularExpression) else { return nil }

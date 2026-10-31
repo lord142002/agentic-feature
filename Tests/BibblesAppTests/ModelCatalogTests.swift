@@ -83,6 +83,28 @@ final class ModelCatalogTests: XCTestCase {
         XCTAssertEqual(vision["max_tokens"] as? Int, LocalBackend.deepMaxTokens)
     }
 
+    func testRouterChoosesLowOrMediumEffortForDeepTasks() {
+        // Jev: a second question in the same call; used only when Jev is sure enough.
+        let body = HybridRouter.decisionsBody(model: "typesafe/jev-1.14", text: "explain this diagram", flags: RouterFlags())
+        let effort = (body["questions"] as? [String: Any])?["effort"] as? [String: Any]
+        XCTAssertEqual(Set((effort?["criteria"] as? [String: String])?.keys.map { $0 } ?? []), ["low", "medium"])
+        let sure = #"{"answers":{"route":{"choice":"deep","probabilities":{"deep":0.9}},"effort":{"choice":"low","probabilities":{"low":0.86,"medium":0.14}}}}"#
+        XCTAssertEqual(HybridRouter.parseDecision(Data(sure.utf8))?.effort, .low)
+        let unsure = #"{"answers":{"route":{"choice":"deep","probabilities":{"deep":0.9}},"effort":{"choice":"low","probabilities":{"low":0.55,"medium":0.45}}}}"#
+        XCTAssertNil(HybridRouter.parseDecision(Data(unsure.utf8))?.effort, "unsure: medium stays")
+        // Haiku: an extra JSON field.
+        XCTAssertEqual(HybridRouter.parse(#"deep","confidence":0.9,"effort":"low"}"#)?.effort, .low)
+        XCTAssertNil(HybridRouter.parse(#"deep","confidence":0.9,"effort":"high"}"#)?.effort, "only low or medium")
+        XCTAssertTrue(RouterPrompt.withEffort(RouterPrompt.base).contains(#""effort":"low|medium""#))
+        // Deep requests use the current level; it starts at medium.
+        let saved = DeepEffort.current
+        defer { DeepEffort.current = saved }
+        DeepEffort.current = .low
+        XCTAssertEqual(LocalBackend.deepEffort, "low")
+        DeepEffort.current = .medium
+        XCTAssertEqual(LocalBackend.deepEffort, "medium")
+    }
+
     func testOnlyPinnedIDs() {
         for model in ModelCatalog.all {
             XCTAssertFalse(model.id.contains("latest"), model.id)
