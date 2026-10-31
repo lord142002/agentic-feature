@@ -627,7 +627,12 @@ struct RouterClient {
             }
             #if BIBBLES_DEVELOPER
             // Cost log: which model Jev Router picked, and what it cost.
-            if let model = openRouterModel { LocalCostLog.shared.recordRouter(model: model, reply: data, milliseconds: elapsed()) }
+            if let model = openRouterModel {
+                LocalCostLog.shared.recordRouter(model: model, reply: data, milliseconds: elapsed())
+            } else if serverToken == nil {
+                // Haiku with the developer's Anthropic key: logged too (log only, nothing else changes).
+                LocalCostLog.shared.recordAnthropicRouter(model: HybridRouter.model, reply: data, milliseconds: elapsed())
+            }
             #endif
             #if BIBBLES_DEVELOPER
             let decided = usesDecisionsAPI ? HybridRouter.parseDecision(data)

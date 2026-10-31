@@ -600,6 +600,30 @@ final class LocalCostLog {
                      cost: cost, milliseconds: milliseconds))
     }
 
+    /// A Haiku router call (Anthropic): the router instructions are cached, so
+    /// cached tokens are priced separately. "In" counts all input tokens.
+    func recordAnthropicRouter(model: String, reply: Data, milliseconds: Int) {
+        let usage = ((try? JSONSerialization.jsonObject(with: reply)) as? [String: Any])?["usage"] as? [String: Any] ?? [:]
+        let tokens = Self.anthropicRouterTokens(usage)
+        record(Entry(date: Date(), feature: "router", model: model, inputTokens: tokens.input, outputTokens: tokens.output,
+                     cost: Self.anthropicRouterCost(usage, model: model), milliseconds: milliseconds))
+    }
+
+    static func anthropicRouterTokens(_ usage: [String: Any]) -> (input: Int?, output: Int?) {
+        func number(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
+        guard usage["input_tokens"] != nil || usage["output_tokens"] != nil else { return (nil, nil) }
+        return (number("input_tokens") + number("cache_creation_input_tokens") + number("cache_read_input_tokens"),
+                number("output_tokens"))
+    }
+
+    /// Anthropic prices: cache writes 1.25×, cache reads 0.1× the input price.
+    static func anthropicRouterCost(_ usage: [String: Any], model: String) -> Double? {
+        guard let choice = ModelCatalog.choice(id: model), usage["input_tokens"] != nil || usage["output_tokens"] != nil else { return nil }
+        func number(_ key: String) -> Double { (usage[key] as? NSNumber)?.doubleValue ?? 0 }
+        let input = number("input_tokens") + 1.25 * number("cache_creation_input_tokens") + 0.1 * number("cache_read_input_tokens")
+        return (input * choice.inputPerMillion + number("output_tokens") * choice.outputPerMillion) / 1_000_000
+    }
+
     /// After a stream: the usage it reported.
     func recordLastUsage(feature: String, model: String, started: Date) {
         let usage = WorkerAPI.lastUsage
