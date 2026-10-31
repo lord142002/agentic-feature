@@ -60,6 +60,18 @@ struct LocalBackend: Backend {
 
     static let lightMaxTokens = 4_096
     static let deepMaxTokens = 8_192
+    /// How hard deep tasks think (all deep requests: chat, streamed chat, screen questions).
+    /// "medium": less thinking than the models' "high" default, so faster and cheaper output.
+    static let deepEffort = "medium"
+
+    /// Anthropic deep request: the effort setting (Sonnet 5.5 keeps adaptive thinking).
+    static func withDeepEffort(_ body: [String: Any]) -> [String: Any] {
+        var body = body
+        var config = body["output_config"] as? [String: Any] ?? [:]
+        config["effort"] = deepEffort
+        body["output_config"] = config
+        return body
+    }
     static let maxImages = 4
     static let maxVisionBytes = 10_000_000
     static let maxAudioBytes = 25_000_000
@@ -88,15 +100,16 @@ struct LocalBackend: Backend {
             let model = ModelCatalog.selected(.deep).id
             let request = try Self.openRouterChatRequest(model: model, messages: Self.chatMessages(messages),
                                                          maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: false,
-                                                         search: false, key: Self.key(.openrouter))
+                                                         search: false, key: Self.key(.openrouter), effort: Self.deepEffort)
             let data = try await Self.send(request, provider: "OpenRouter", slot: .openrouter, session: session)
             LocalCostLog.shared.record(feature: "chat deep", model: model, reply: data, started: started)
             return try WorkerAPI.parseChat(data, mode: mode)
         }
         if mode == .deep {
             let model = ModelCatalog.selected(.deep).id
-            let body = Self.anthropicBody(model: model, messages: messages,
-                                          maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: false, search: false)
+            let body = Self.withDeepEffort(Self.anthropicBody(model: model, messages: messages,
+                                                              maxTokens: Self.cap(maxTokens, Self.deepMaxTokens),
+                                                              stream: false, search: false))
             let data = try await Self.send(Self.anthropicRequest(body: body, key: Self.key(.anthropic)),
                                            provider: "Anthropic", slot: .anthropic, session: session)
             LocalCostLog.shared.record(feature: "chat deep", model: model, reply: data, started: started)
@@ -129,7 +142,7 @@ struct LocalBackend: Backend {
             let model = ModelCatalog.selected(.deep).id
             let request = try Self.openRouterChatRequest(model: model, messages: Self.chatMessages(messages),
                                                          maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: true,
-                                                         search: false, key: Self.key(.openrouter))
+                                                         search: false, key: Self.key(.openrouter), effort: Self.deepEffort)
             let result = try await Self.stream(request, provider: "OpenRouter", slot: .openrouter, session: session,
                                                onUpdate: onUpdate)
             LocalCostLog.shared.recordLastUsage(feature: "chat deep", model: model, started: started)
@@ -137,8 +150,9 @@ struct LocalBackend: Backend {
         }
         if mode == .deep {
             let model = ModelCatalog.selected(.deep).id
-            let body = Self.anthropicBody(model: model, messages: messages,
-                                          maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: true, search: false)
+            let body = Self.withDeepEffort(Self.anthropicBody(model: model, messages: messages,
+                                                              maxTokens: Self.cap(maxTokens, Self.deepMaxTokens),
+                                                              stream: true, search: false))
             let result = try await Self.stream(Self.anthropicRequest(body: body, key: Self.key(.anthropic), stream: true),
                                                provider: "Anthropic", slot: .anthropic, session: session, onUpdate: onUpdate)
             LocalCostLog.shared.recordLastUsage(feature: "chat deep", model: model, started: started)
@@ -182,6 +196,7 @@ struct LocalBackend: Backend {
             let model = ModelCatalog.selected(.deep).id
             var openRouter = Self.openRouterVisionBody(request, model: model, cap: Self.deepMaxTokens)
             openRouter["provider"] = Self.privacy
+            openRouter["reasoning"] = ["effort": Self.deepEffort]
             let data = try await Self.send(Self.openRouterRequest(path: "chat/completions", json: openRouter,
                                                                   key: Self.key(.openrouter)),
                                            provider: "OpenRouter", slot: .openrouter, session: session)
@@ -190,7 +205,7 @@ struct LocalBackend: Backend {
         }
         if tier == .deep {
             let model = ModelCatalog.selected(.deep).id
-            let anthropic = Self.anthropicVisionBody(request, model: model, cap: Self.deepMaxTokens)
+            let anthropic = Self.withDeepEffort(Self.anthropicVisionBody(request, model: model, cap: Self.deepMaxTokens))
             let data = try await Self.send(Self.anthropicRequest(body: anthropic, key: Self.key(.anthropic)),
                                            provider: "Anthropic", slot: .anthropic, session: session)
             LocalCostLog.shared.record(feature: "vision deep", model: model, reply: data, started: started)
@@ -404,7 +419,7 @@ struct LocalBackend: Backend {
     }
 
     static func openRouterChatRequest(model: String, messages: [[String: Any]], maxTokens: Int,
-                                      stream: Bool, search: Bool, key: String) throws -> URLRequest {
+                                      stream: Bool, search: Bool, key: String, effort: String? = nil) throws -> URLRequest {
         var body: [String: Any] = [
             "model": model,
             "messages": messages,
@@ -414,6 +429,7 @@ struct LocalBackend: Backend {
             "usage": ["include": true]
         ]
         if search { body["plugins"] = [["id": "web", "max_results": 5]] }
+        if let effort { body["reasoning"] = ["effort": effort] }
         var request = try openRouterRequest(path: "chat/completions", json: body, key: key)
         if stream { request.timeoutInterval = streamTimeout }
         return request

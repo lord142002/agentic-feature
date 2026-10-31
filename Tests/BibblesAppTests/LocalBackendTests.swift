@@ -370,6 +370,23 @@ final class LocalBackendTests: XCTestCase {
         XCTAssertEqual((converted["messages"] as? [[String: Any]])?.first?["role"] as? String, "system")
     }
 
+    func testDeepTasksThinkAtMediumEffort() throws {
+        XCTAssertEqual(LocalBackend.deepEffort, "medium")
+        let body = LocalBackend.withDeepEffort(LocalBackend.anthropicBody(
+            model: "claude-sonnet-5-5", messages: [["role": "user", "content": "hi"]], maxTokens: 100, stream: false, search: false))
+        XCTAssertEqual((body["output_config"] as? [String: Any])?["effort"] as? String, "medium")
+        XCTAssertNil(body["thinking"], "adaptive thinking stays on (the model default)")
+        let request = try LocalBackend.openRouterChatRequest(model: "openai/gpt-6.1-sol", messages: [["role": "user", "content": "hi"]],
+                                                             maxTokens: 100, stream: false, search: false, key: "k", effort: "medium")
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertEqual((sent["reasoning"] as? [String: Any])?["effort"] as? String, "medium")
+        // Light requests carry no effort setting.
+        let light = try LocalBackend.openRouterChatRequest(model: "deepseek/deepseek-v4.1-flash", messages: [["role": "user", "content": "hi"]],
+                                                           maxTokens: 100, stream: false, search: false, key: "k")
+        let lightSent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(light.httpBody)) as? [String: Any])
+        XCTAssertNil(lightSent["reasoning"])
+    }
+
     // MARK: Usage cache and badge
 
     func testUsageCacheKeepsOnlyUsageNumbers() throws {
