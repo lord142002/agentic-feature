@@ -18,6 +18,7 @@ Prices are US dollars per million tokens (input / output) unless noted.
 | Deep chat, deep vision (option) | GPT-6.1 Sol | `openai/gpt-6.1-sol` | OpenRouter | $2.00 / $10.00 (checked 2026-10-30) |
 | AI router option | Jev 1.14 (TypeSafe) | `typesafe/jev-1.14` | OpenRouter (Decisions API) | $0.042 / $0 (checked 2026-10-30) |
 | Agent planner and screen agent option | Gemini 3.8 Flash | `google/gemini-3.8-flash` | OpenRouter | $0.825 / $4.125 |
+| Screen agent option | Qwen 3.8 Max (0902) | `qwen/qwen3.8-max-0902` | OpenRouter | $2.00 / $6.00 (checked 2026-11-03) |
 | Speech to text | Nemotron 3.5 ASR (multilingual) | `nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b` | OpenRouter | $0.00000333 per unit (listed `prompt` price) |
 | Speech to text backup | Deepgram Nova-3 | `nova-3` | Deepgram | Deepgram's own pricing |
 | Spoken answers | Gemini 3.8 Flash Lite TTS | `google/gemini-3.8-flash-lite-tts` | OpenRouter | $0.50 / $6.00 |
@@ -27,6 +28,7 @@ Prices are US dollars per million tokens (input / output) unless noted.
 - **`openai/gpt-5-mini` is still listed** on OpenRouter ($0.25 / $2.00), so it stays the agent planner default. It does not accept `temperature`; Bibbles leaves it out for that model.
 - **Claude Haiku 5.5**: the direct ID is `claude-haiku-5-5`. Anthropic's model ID page says that from the Claude 4.6 generation on, IDs have no date and each ID "identifies a pinned version of the model", so this dateless ID is pinned. On OpenRouter it is `anthropic/claude-haiku-5.5` ($0.10 / $0.50). The planner calls it directly with the Anthropic key. Its price is higher for prompts over 100K tokens, which agent prompts never reach.
 - **`google/gemini-3.8-flash`** is listed ($0.825 / $4.125). It accepts `temperature` and structured outputs.
+- **`qwen/qwen3.8-max-0902`** is listed ($2.00 / $6.00, checked 2026-11-03). It reads images, accepts `temperature`, and lists `structured_outputs`, so the screen agent asks it for the strict format like GPT-5 mini. The older `qwen/qwen3.8-max-20260803` is no longer listed.
 - **DeepSeek V4.1 Flash** also has a dated variant, `deepseek/deepseek-v4.1-flash-1017` ($0.30 / $1.20). Local mode uses `deepseek/deepseek-v4.1-flash` because that is what the live Worker uses, and Local mode must match the Worker. If the Worker moves to the dated ID, change `ModelCatalog.deepSeekFlash` too.
 - OpenRouter lists `~anthropic/claude-haiku-latest`. This is an alias, so it is not used.
 - The speech models don't appear in the default `/api/v1/models` listing. They are listed with `?output_modalities=speech` and `?output_modalities=transcription` (evidence below).

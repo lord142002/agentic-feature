@@ -209,6 +209,13 @@ final class ScreenAgentTests: XCTestCase {
         let gemini = StubURLProtocol.json(of: try AgentPlanner.request(model: ModelCatalog.gemini38Flash, system: "S", user: "U",
                                                                        strictSchema: ScreenPlanParser.strictSchema))
         XCTAssertNil(gemini["response_format"], "Gemini rejected the loose format, so it gets none")
+        let qwen = StubURLProtocol.json(of: try AgentPlanner.request(model: ModelCatalog.qwen38Max, system: "S", user: "U",
+                                                                     strictSchema: ScreenPlanParser.strictSchema))
+        let qwenFormat = qwen["response_format"] as? [String: Any]
+        XCTAssertEqual((qwenFormat?["json_schema"] as? [String: Any])?["strict"] as? Bool, true, "Qwen 3.8 Max gets the strict format too")
+        XCTAssertEqual((qwen["provider"] as? [String: Any])?["data_collection"] as? String, "deny", "same privacy rule")
+        XCTAssertTrue(ModelCatalog.choices(for: .screenAgent).contains(ModelCatalog.qwen38Max))
+        XCTAssertEqual(ModelCatalog.defaultChoice(for: .screenAgent), ModelCatalog.gpt5Mini, "GPT-5 mini stays the default")
     }
 
     func testEmptyRepliesSayWhy() {

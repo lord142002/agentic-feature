@@ -22,6 +22,8 @@ struct ModelChoice: Identifiable, Equatable {
     let outputPerMillion: Double
     /// Whether the provider accepts `temperature` for this model.
     var acceptsTemperature = true
+    /// Takes OpenAI-style strict structured output on OpenRouter (OpenAI models always do).
+    var strictFormat = false
 }
 
 /// What a model is used for. Developer builds only; customers never see model names.
@@ -80,6 +82,10 @@ enum ModelCatalog {
                                       acceptsTemperature: false)
     static let gemini38Flash = ModelChoice(id: "google/gemini-3.8-flash", provider: .openrouter,
                                            name: "Gemini 3.8 Flash", inputPerMillion: 0.825, outputPerMillion: 4.125)
+    /// Screen agent option to test against GPT-5 mini: reads screenshots, strict structured output.
+    static let qwen38Max = ModelChoice(id: "qwen/qwen3.8-max-0902", provider: .openrouter,
+                                       name: "Qwen 3.8 Max", inputPerMillion: 2.00, outputPerMillion: 6.00,
+                                       strictFormat: true)
 
     /// Speech (OpenRouter), and Deepgram as the speech-to-text backup.
     static let speechToText = "nvidia/nemotron-3.5-asr-streaming-multilingual-0.6b"
@@ -90,7 +96,7 @@ enum ModelCatalog {
     static let textToSpeechOutputPerMillion = 6.00
     static let deepgramModel = "nova-3"
 
-    static let all: [ModelChoice] = [deepSeekFlash, haiku45, haiku55, sonnet55, gpt5Mini, gemini38Flash, jev, gpt61Sol]
+    static let all: [ModelChoice] = [deepSeekFlash, haiku45, haiku55, sonnet55, gpt5Mini, gemini38Flash, qwen38Max, jev, gpt61Sol]
 
     // MARK: Choices
 
@@ -102,7 +108,7 @@ enum ModelCatalog {
         case .agentPlanner: return [gpt5Mini, haiku55, gemini38Flash, haiku45, sonnet55]
         case .agentBackup: return [haiku45, haiku55]
         // GPT-5 mini: cheapest reliable screen planner in testing (2026-10-29).
-        case .screenAgent: return [gpt5Mini, gemini38Flash, haiku55, sonnet55]
+        case .screenAgent: return [gpt5Mini, qwen38Max, gemini38Flash, haiku55, sonnet55]
         }
     }
 

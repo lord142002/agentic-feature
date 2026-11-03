@@ -628,8 +628,8 @@ enum AgentPlanner {
                 "reasoning": ["effort": "low"],
                 "usage": ["include": true]
             ]
-            if model.id.hasPrefix("openai/"), let strictSchema {
-                // OpenAI's strict mode: the reply must match the format exactly.
+            if model.id.hasPrefix("openai/") || model.strictFormat, let strictSchema {
+                // Strict mode: the reply must match the format exactly.
                 body["response_format"] = ["type": "json_schema",
                                            "json_schema": ["name": schemaName, "strict": true, "schema": strictSchema]]
             } else if !model.id.hasPrefix("google/") {
