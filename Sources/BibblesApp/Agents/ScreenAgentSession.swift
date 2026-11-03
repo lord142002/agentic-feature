@@ -19,6 +19,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
 
     static let maxRounds = 8
     static let maxDuration: TimeInterval = 10 * 60
+    /// Total steps across all rounds before the agent stops (borrowed from Hermes' iteration budget).
+    static let maxTotalSteps = 30
 
     let id = UUID()
     let request: AgentRequest
@@ -51,6 +53,14 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     private var finishedAt: Date?
     private var work: Task<Void, Never>?
     private var log = AgentLogEntry(route: "agent_screen")
+    /// Total steps done across all rounds (for the step budget cap).
+    private var totalStepsDone = 0
+    /// The AI's first plan (kept when the whole task works in one part).
+    private var firstPlan: ScreenPlan?
+    /// The first plan came from task memory, not the AI.
+    private var usedMemory = false
+    /// The app the task started in (task memory is per app).
+    private var startBundleID: String?
 
     /// A final action (Send, Buy…) waiting for the user's OK, in the user's words
     /// ("Press “Send” in Mail"). The robot shows a red 1; the card asks.
@@ -112,6 +122,10 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         history = []
         skipped = []
         result = ScreenRunResult()
+        totalStepsDone = 0
+        firstPlan = nil
+        usedMemory = false
+        startBundleID = app?.bundleIdentifier
         startedAt = Date()
         log = AgentLogEntry(route: "agent_screen", layer: layer)
         planRound()
@@ -152,7 +166,19 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 self.log.filesScanned += snapshot.fields.count + snapshot.controls.count
                 let plan: ScreenPlan
                 var dropped: [AgentDroppedStep] = []
-                if isFirst, ScreenAgentDetector.isDetailsFill(text) {
+                // The same request worked here before: reuse those steps if they all still fit this screen.
+                var remembered: ScreenPlan?
+                if isFirst, !ScreenAgentDetector.isDetailsFill(text),
+                   let saved = ScreenPlanMemory.recall(app: app.bundleIdentifier, request: text) {
+                    let check = ScreenPlanValidator.preview(saved, snapshot: snapshot, request: text, details: details)
+                    if !check.isEmpty, check.dropped.isEmpty, !check.looksAgain { remembered = saved }
+                }
+                if let remembered {
+                    plan = remembered
+                    self.usedMemory = true
+                    self.madeOnMac = true
+                    self.log.plannerModel = "remembered plan (no AI)"
+                } else if isFirst, ScreenAgentDetector.isDetailsFill(text) {
                     // Personal details: matched on the Mac, never sent to an AI.
                     guard !details.isEmpty else {
                         throw AgentError.folder("Add your details first: Settings → Developer → My details (or use your Contacts card).")
@@ -196,12 +222,14 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                     try Task.checkCancellation()
                     guard let parsedPlan = parsed.plan else { throw AgentError.planFailed("invalid plan") }
                     plan = parsedPlan
+                    if isFirst { self.firstPlan = parsedPlan }
                     dropped = parsed.dropped
                     self.log.planMilliseconds = (self.log.planMilliseconds ?? 0) + Int(Date().timeIntervalSince(started) * 1000)
                     self.log.plannerModel = reply.model.id + (reply.usedBackup ? " (backup)" : "")
                     self.log.estimatedCost = (self.log.estimatedCost ?? 0) + (reply.estimatedCost ?? 0)
                 }
-                let preview = ScreenPlanValidator.preview(plan, snapshot: snapshot, request: text, details: details, dropped: dropped)
+                var preview = ScreenPlanValidator.preview(plan, snapshot: snapshot, request: text, details: details, dropped: dropped)
+                if isFirst, self.usedMemory { preview.notes.insert("Using the steps that worked last time (no AI needed)", at: 0) }
                 self.log.stepsPlanned += plan.steps.count + dropped.count
                 self.log.stepsDropped += preview.dropped.count
                 self.log.stepsValid += preview.actions.count
@@ -291,6 +319,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     func confirm() {
         guard phase == .preview, !preview.isEmpty, let app else { return }
         let executor = self.executor ?? ScreenExecutor(inserter: inserter)
+        executor.stepBudget = max(0, Self.maxTotalSteps - totalStepsDone)
         executor.confirm = { [weak self] action, app in
             guard let self else { return false }
             return await self.askUser(action, in: app)
@@ -308,10 +337,16 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
             self.merge(roundResult)
             if let switched = roundResult.switchedApp { self.app = switched }
             self.history += lines.prefix(roundResult.done)
+            self.totalStepsDone += roundResult.done
             self.log.executeMilliseconds = (self.log.executeMilliseconds ?? 0) + Int(Date().timeIntervalSince(roundStarted) * 1000)
             let outOfTime = Date().timeIntervalSince(self.startedAt) > Self.maxDuration
-            if roundResult.stopped || roundResult.firstError != nil || self.planDone || self.round >= Self.maxRounds || outOfTime {
+            let outOfBudget = self.totalStepsDone >= Self.maxTotalSteps
+            if roundResult.stopped || roundResult.firstError != nil || self.planDone || self.round >= Self.maxRounds || outOfTime || outOfBudget {
                 if !self.planDone, self.round >= Self.maxRounds || outOfTime { self.result.stopped = true }
+                if outOfBudget, !self.planDone {
+                    self.result.stopped = true
+                    if self.result.firstError == nil { self.result.firstError = "reached the \(Self.maxTotalSteps)-step limit" }
+                }
                 self.finish()
             } else {
                 self.round += 1
@@ -325,6 +360,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         result.total += part.total
         result.failed += part.failed
         result.filled += part.filled
+        result.verified += part.verified
+        result.unverified += part.unverified
         result.stopped = result.stopped || part.stopped
         result.firstError = result.firstError ?? part.firstError
         result.previousValues += part.previousValues
@@ -347,8 +384,20 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         }
     }
 
+    /// Task memory: keep a plan that worked in one part; drop a remembered one that failed.
+    private func updateTaskMemory() {
+        let failed = result.failed > 0 || result.firstError != nil
+        if usedMemory {
+            if failed { ScreenPlanMemory.forget(app: startBundleID, request: request.text) }
+            return
+        }
+        let worked = round == 1 && planDone && !failed && !result.stopped && skipped.isEmpty && result.done > 0
+        if worked, let firstPlan { ScreenPlanMemory.remember(firstPlan, app: startBundleID, request: request.text) }
+    }
+
     private func finish() {
         finishedAt = Date()
+        updateTaskMemory()
         var sentences: [String] = []
         savedFile = result.savedFile
         if let file = result.savedFile {
@@ -360,6 +409,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         if !skipped.isEmpty {
             sentences.append("Skipped \(skipped.count) step\(skipped.count == 1 ? "" : "s"): \(skipped[0]).")
         }
+        if result.unverified > 0 { sentences.append("\(result.unverified) action\(result.unverified == 1 ? "" : "s") couldn't be verified.") }
         if let problem = result.firstError { sentences.append("Stopped: \(problem).") }
         else if result.stopped { sentences.append(strings.stopped(result.done, result.total)) }
         resultSummary = sentences.isEmpty ? strings.nothing : sentences.joined(separator: " ")
