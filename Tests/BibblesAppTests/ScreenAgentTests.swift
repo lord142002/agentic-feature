@@ -747,12 +747,14 @@ final class ScreenAgentTests: XCTestCase {
 
     // MARK: - Step budget cap
 
+    @MainActor
     func testMaxTotalStepsIs30() {
         XCTAssertEqual(ScreenAgentSession.maxTotalSteps, 30)
     }
 
     // MARK: - Stall guard threshold
 
+    @MainActor
     func testStallThresholdIs3() {
         XCTAssertEqual(ScreenExecutor.stallThreshold, 3)
     }

@@ -2189,14 +2189,14 @@ final class ScreenExecutor {
             guard ScreenAX.press(item) else { return "couldn't choose \(path.last ?? "")" }
             try? await Task.sleep(nanoseconds: 700_000_000)
         case .press(let title):
-            guard let found = await ScreenAX.findControl(title, in: app) else { return “couldn't find “\(title)”” }
+            guard let found = await ScreenAX.findControl(title, in: app) else { return "couldn't find “\(title)”" }
             // The screen may have changed since the preview.
-            if let problem = await askFirstIfFinal(found.control.title, verb: “Press”, in: app) { return problem }
+            if let problem = await askFirstIfFinal(found.control.title, verb: "Press", in: app) { return problem }
             // Pressing Save in a sheet: remember the name to find the file afterwards.
             let savingName = ScreenSafety.saveButtons.contains(ScreenAX.normalized(found.control.title))
                 ? ScreenAX.saveSheet(in: app).flatMap { ScreenAX.nameField(in: $0) }.flatMap { ScreenAX.string($0, kAXValueAttribute) } : nil
             let pressedAt = Date()
-            guard ScreenAX.press(found.element) else { return “couldn't press “\(title)”” }
+            guard ScreenAX.press(found.element) else { return "couldn't press “\(title)”" }
             try? await Task.sleep(nanoseconds: 500_000_000)
             // Verify the press landed.
             switch await verifyPress(title, in: app) {
@@ -2233,11 +2233,11 @@ final class ScreenExecutor {
             if let problem = await replaceProblem(in: app) { return problem }
             result.savedFile = await locateSaved(finalName, in: folder, since: pressedAt)
         case .toggle(let title, let on):
-            guard let found = await ScreenAX.findControl(title, roles: [“AXCheckBox”, “AXRadioButton”], in: app, timeout: 2) else {
-                return “couldn't find “\(title)””
+            guard let found = await ScreenAX.findControl(title, roles: ["AXCheckBox", "AXRadioButton"], in: app, timeout: 2) else {
+                return "couldn't find “\(title)”"
             }
-            if let problem = await askFirstIfFinal(found.control.title, verb: “Switch”, in: app) { return problem }
-            if found.control.isOn != on, !ScreenAX.press(found.element) { return “couldn't switch “\(title)”” }
+            if let problem = await askFirstIfFinal(found.control.title, verb: "Switch", in: app) { return problem }
+            if found.control.isOn != on, !ScreenAX.press(found.element) { return "couldn't switch “\(title)”" }
             // Verify the toggle changed.
             try? await Task.sleep(nanoseconds: 200_000_000)
             switch verifyToggle(found.element, expectedOn: on) {
@@ -2281,7 +2281,7 @@ final class ScreenExecutor {
         case .fill(let field, let text):
             let filled = await FormFieldFiller(inserter: inserter).fill([FormFillAction(field: field.id, text: text, replace: true)],
                                                                          fields: [field])
-            guard filled == 1 else { return “couldn't type into “\(field.label)”” }
+            guard filled == 1 else { return "couldn't type into “\(field.label)”" }
             result.previousValues.append((field, field.value))
             result.filled += 1
             // Verify the fill landed.
@@ -2305,9 +2305,8 @@ final class ScreenExecutor {
                 if ScreenAX.textRoles.contains(found.control.role) {
                     AXUIElementSetAttributeValue(found.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                     if let middle = ScreenAX.center(of: found.element) { ScreenAX.click(at: middle) }
-                    result.verified += 1
                 } else if !ScreenAX.press(found.element) {
-                    guard let middle = ScreenAX.center(of: found.element) else { return “couldn't press “\(name)”” }
+                    guard let middle = ScreenAX.center(of: found.element) else { return "couldn't press “\(name)”" }
                     ScreenAX.click(at: middle)
                 }
                 try? await Task.sleep(nanoseconds: 600_000_000)
