@@ -296,6 +296,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     func confirm() {
         guard phase == .preview, !preview.isEmpty, let app else { return }
         let executor = self.executor ?? ScreenExecutor(inserter: inserter)
+        executor.stepBudget = max(0, Self.maxTotalSteps - totalStepsDone)
         executor.confirm = { [weak self] action, app in
             guard let self else { return false }
             return await self.askUser(action, in: app)

@@ -2071,6 +2071,8 @@ final class ScreenExecutor {
     /// Consecutive failures on the same kind of action (stall guard).
     private var consecutiveFailures = 0
     private var lastFailedActionKind: String?
+    /// Steps this run may still take (what's left of the task's step limit).
+    var stepBudget = Int.max
 
     /// Asks before a final action (Send, Buy, Delete…); tests replace it.
     /// The session sets this: the question waits in the agent card (the robot shows a red 1).
@@ -2173,18 +2175,21 @@ final class ScreenExecutor {
         try? await Task.sleep(nanoseconds: 200_000_000)
         for action in actions {
             if stopRequested || Task.isCancelled { result.stopped = true; break }
-            // Stall guard: too many failures in a row on the same kind of action.
-            if isStalled {
+            if result.done >= stepBudget {
                 result.stopped = true
-                if result.firstError == nil {
-                    result.firstError = "stopped: \(lastFailedActionKind ?? "action") failed \(Self.stallThreshold) times in a row"
-                }
+                if result.firstError == nil { result.firstError = "reached the \(ScreenAgentSession.maxTotalSteps)-step limit" }
                 break
             }
             if let problem = await perform(action, in: app, result: &result) {
                 result.failed += 1
                 recordOutcome(actionKind: action.kindName, failed: true)
                 if result.firstError == nil { result.firstError = problem }
+                // Stall guard: too many failures in a row on the same kind of action.
+                if isStalled {
+                    let first = result.firstError.map { " (first: \($0))" } ?? ""
+                    result.firstError = "\(Self.stallThreshold) “\(lastFailedActionKind ?? "action")” steps failed in a row\(first)"
+                    result.stopped = true; result.done += 1; progress(result.done, actions.count); break
+                }
                 // Later steps depend on this one: stop rather than act on the wrong screen.
                 if case .fill = action {} else { result.stopped = true; result.done += 1; progress(result.done, actions.count); break }
             } else {
