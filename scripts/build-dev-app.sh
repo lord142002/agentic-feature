@@ -50,6 +50,10 @@ mkdir -p "$CONTENTS/Resources"
 for asset in BrandMark.png BrandLogo.png; do
   [ -f "$PROJECT_DIR/Resources/$asset" ] && cp "$PROJECT_DIR/Resources/$asset" "$CONTENTS/Resources/$asset"
 done
+# The agent robot (top-right corner while an agent works): developer builds only, like agents.
+if [ "${DEVELOPER:-0}" = "1" ] && [ -f "$PROJECT_DIR/Resources/AgentRobot.png" ]; then
+  cp "$PROJECT_DIR/Resources/AgentRobot.png" "$CONTENTS/Resources/AgentRobot.png"
+fi
 
 export CLANG_MODULE_CACHE_PATH=${CLANG_MODULE_CACHE_PATH:-/private/tmp/bibbles-clang-cache}
 export SWIFTPM_MODULECACHE_OVERRIDE=${SWIFTPM_MODULECACHE_OVERRIDE:-/private/tmp/bibbles-swiftpm-cache}

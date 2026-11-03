@@ -50,8 +50,9 @@ final class AgentPanelController {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { $0.frame.contains(mouse) } ?? NSScreen.main
         if let frame = screen?.visibleFrame {
+            // Below the agent robot, which has the top-right corner.
             panel.setFrameOrigin(NSPoint(x: (frame.maxX - Self.size.width - 24).rounded(),
-                                         y: (frame.maxY - Self.size.height - 24).rounded()))
+                                         y: (frame.maxY - Self.size.height - 24 - AgentRobotController.reservedHeight).rounded()))
         }
         panel.orderFrontRegardless()
     }

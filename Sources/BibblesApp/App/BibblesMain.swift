@@ -2481,6 +2481,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         }
         activeFilesSession = session
         activeScreenSession = nil
+        AgentRobotController.shared.follow(session)
         agentPanel.show(session)
         session.start()
     }
@@ -2509,6 +2510,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         }
         activeScreenSession = session
         activeFilesSession = nil
+        AgentRobotController.shared.follow(session)
         agentPanel.show(session)
         session.start()
     }

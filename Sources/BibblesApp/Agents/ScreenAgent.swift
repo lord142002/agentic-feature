@@ -1501,10 +1501,15 @@ enum ScreenAX {
     }
 
     /// The title of the button or link under a screen point (to catch a "Buy" the plan called something else).
-    static func titleAt(_ point: CGPoint) -> String? {
+    static func titleAt(_ point: CGPoint, retried: Bool = false) -> String? {
         var hit: AXUIElement?
         guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &hit) == .success,
               let element = hit else { return nil }
+        // The agent robot sits on top: look at what is under it (a "Buy" must still ask first).
+        var pid: pid_t = 0
+        if !retried, AXUIElementGetPid(element, &pid) == .success, pid == getpid(), AgentRobotController.shared.isVisible {
+            return AgentRobotController.shared.hidden { Self.titleAt(point, retried: true) }
+        }
         let name = title(element)
         if !name.isEmpty { return name }
         return Self.element(element, kAXParentAttribute).map { title($0) }
