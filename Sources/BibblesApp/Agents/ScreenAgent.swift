@@ -632,6 +632,12 @@ enum ScreenPlayback {
 
 /// Screenshot points (0…1 from the top left) to screen points for clicks.
 enum ScreenGeometry {
+    /// Whether a top-left screen point lies on a display (`frame` in AppKit coordinates).
+    static func contains(_ point: CGPoint, _ frame: CGRect) -> Bool {
+        let flipped = CGPoint(x: point.x, y: primaryHeight - point.y)
+        return frame.insetBy(dx: -1, dy: -1).contains(flipped)
+    }
+
     /// `frame`: the captured display in AppKit coordinates (bottom-left origin).
     static func globalPoint(x: Double, y: Double, displayFrame frame: CGRect, primaryHeight: CGFloat) -> CGPoint {
         let appKitY = frame.maxY - CGFloat(y) * frame.height
@@ -2223,7 +2229,7 @@ final class ScreenExecutor {
     private func askFirstIfFinal(_ title: String, verb: String, in app: NSRunningApplication) async -> String? {
         if ScreenSafety.neverWord(in: title) != nil { return "“\(title)” is never pressed by Bibbles" }
         guard ScreenSafety.blockedWord(in: title) != nil else { return nil }
-        return await confirm("\(verb) “\(title)”", app) ? nil : "you stopped before “\(title)”"
+        return await ask("\(verb) “\(title)”", app) ? nil : "you stopped before “\(title)”"
     }
 
     func stop() { stopRequested = true }
@@ -2304,6 +2310,30 @@ final class ScreenExecutor {
         return false
     }
 
+    /// Bibbles' own windows (the agent card, the robot) that let clicks through while the agent works.
+    private var passThroughWindows: [NSWindow] = []
+
+    /// The screenshot leaves Bibbles' windows out, so a planned click may be under the agent
+    /// card: while the agent works, clicks go through Bibbles' windows to the app underneath.
+    private func letClicksThrough(_ on: Bool) {
+        if on {
+            passThroughWindows = NSApp.windows.filter { $0.isVisible && !$0.ignoresMouseEvents }
+            passThroughWindows.forEach { $0.ignoresMouseEvents = true }
+        } else {
+            passThroughWindows.forEach { $0.ignoresMouseEvents = false }
+            passThroughWindows = []
+        }
+    }
+
+    /// Asks the user; Bibbles' windows take clicks again while the question is open.
+    private func ask(_ action: String, _ app: NSRunningApplication) async -> Bool {
+        let wasPassingThrough = !passThroughWindows.isEmpty
+        if wasPassingThrough { letClicksThrough(false) }
+        let yes = await confirm(action, app)
+        if wasPassingThrough { letClicksThrough(true) }
+        return yes
+    }
+
     /// The red Bibbles pointer glides to where the next action happens.
     private func aim(at target: CGPoint?) async {
         guard let target else { return }
@@ -2329,7 +2359,10 @@ final class ScreenExecutor {
             }
             // A mouse action moves the real pointer: put it back where the user left it.
             let userPointer = action.usesMouse ? CGEvent(source: nil)?.location : nil
+            // Only during the click itself, so Stop on the card works between steps.
+            if action.usesMouse { letClicksThrough(true) }
             let failure = await perform(action, in: app, result: &result)
+            if action.usesMouse { letClicksThrough(false) }
             if let userPointer { CGWarpMouseCursorPosition(userPointer) }
             if result.lookAgainNote != nil { break }
             if let problem = failure {
@@ -2493,7 +2526,7 @@ final class ScreenExecutor {
                 ScreenAX.scrollIntoView(found.element)
                 if ScreenSafety.neverWord(in: name) != nil { return "“\(name)” is never pressed by Bibbles" }
                 if isFinalStep || ScreenSafety.blockedWord(in: name) != nil {
-                    guard await confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
+                    guard await ask("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
                 }
                 await aim(at: ScreenAX.center(of: found.element) ?? point)
                 if ScreenAX.textRoles.contains(found.control.role) {
@@ -2519,19 +2552,30 @@ final class ScreenExecutor {
             }
             if isFinalStep || ScreenSafety.blockedWord(in: underneath) != nil {
                 let name = [underneath, label].first { !$0.isEmpty } ?? "this"
-                guard await confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
+                guard await ask("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
             }
             await aim(at: point)
             ScreenAX.click(at: point)
             try? await Task.sleep(nanoseconds: 450_000_000)
-        case .doubleClick(let point, let label, let isFinalStep):
+        case .doubleClick(let planned, let label, let isFinalStep):
+            var point = planned
+            if !label.isEmpty,
+               let found = await ScreenAX.findControl(label, roles: ScreenAX.controlRoles.union(ScreenAX.textRoles), in: app,
+                                                      timeout: 1, near: planned) {
+                ScreenAX.scrollIntoView(found.element)
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                point = ScreenAX.center(of: found.element) ?? planned
+            }
+            guard NSScreen.screens.contains(where: { ScreenGeometry.contains(point, $0.frame) }) else {
+                return "“\(label.isEmpty ? "that spot" : label)” is off screen"
+            }
             let underneath = ScreenAX.titleAt(point) ?? ""
             if ScreenSafety.neverWord(in: underneath) != nil || ScreenSafety.neverWord(in: label) != nil {
                 return "“\(underneath.isEmpty ? label : underneath)” is never pressed by Bibbles"
             }
             if isFinalStep || ScreenSafety.blockedWord(in: underneath) != nil {
                 let name = [underneath, label].first { !$0.isEmpty } ?? "this"
-                guard await confirm("Double-click “\(name)”", app) else { return "you stopped before “\(name)”" }
+                guard await ask("Double-click “\(name)”", app) else { return "you stopped before “\(name)”" }
             }
             await aim(at: point)
             ScreenAX.doubleClick(at: point)
@@ -2545,7 +2589,10 @@ final class ScreenExecutor {
                 try? await Task.sleep(nanoseconds: 300_000_000)
             }
             guard let target else {
-                result.lookAgainNote = "nothing was typed: no text box had the cursor (on a canvas, double-click the text first)"
+                // Developer builds: which item had the focus instead, to see why typing couldn't start.
+                let focused = ScreenAX.element(AXUIElementCreateApplication(app.processIdentifier), kAXFocusedUIElementAttribute)
+                let role = focused.flatMap { ScreenAX.string($0, kAXRoleAttribute) } ?? "nothing"
+                result.lookAgainNote = "nothing was typed: no text box had the cursor (focus: \(role); on a canvas, double-click the text first)"
                 return nil
             }
             lastTextElement = target
@@ -2554,7 +2601,7 @@ final class ScreenExecutor {
         case .key(let keys, let isFinalStep):
             guard let parsed = ScreenKeys.parse(keys) else { return "Bibbles doesn't press \(keys)" }
             if isFinalStep {
-                guard await confirm("Press \(keys)", app) else { return "you stopped before \(keys)" }
+                guard await ask("Press \(keys)", app) else { return "you stopped before \(keys)" }
                 // The question took the focus: put the cursor back where the text was typed.
                 if let lastTextElement {
                     AXUIElementSetAttributeValue(lastTextElement, kAXFocusedAttribute as CFString, kCFBooleanTrue)
@@ -2573,7 +2620,7 @@ final class ScreenExecutor {
             let names = [ScreenAX.titleAt(from) ?? "", ScreenAX.titleAt(to) ?? "", label]
             if isFinalStep || names.contains(where: { ScreenSafety.blockedWord(in: $0) != nil }) {
                 let name = names.first { !$0.isEmpty } ?? "this"
-                guard await confirm("Drag “\(name)”", app) else { return "you stopped before dragging “\(name)”" }
+                guard await ask("Drag “\(name)”", app) else { return "you stopped before dragging “\(name)”" }
             }
             await aim(at: from)
             ScreenAX.click(at: from)
