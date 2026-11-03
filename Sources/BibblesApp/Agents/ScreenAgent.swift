@@ -2032,15 +2032,16 @@ final class ScreenExecutor {
     private var lastTextElement: AXUIElement?
 
     /// Asks before a final action (Send, Buy, Delete…); tests replace it.
-    var confirm: @MainActor (String, NSRunningApplication) -> Bool = { action, app in ScreenConfirm.ask(action, in: app) }
+    /// The session sets this: the question waits in the agent card (the robot shows a red 1).
+    var confirm: @MainActor (String, NSRunningApplication) async -> Bool = { action, app in ScreenConfirm.ask(action, in: app) }
 
     init(inserter: FocusedTextInserter) { self.inserter = inserter }
 
     /// nil when it may go ahead; otherwise why it stopped.
-    private func askFirstIfFinal(_ title: String, verb: String, in app: NSRunningApplication) -> String? {
+    private func askFirstIfFinal(_ title: String, verb: String, in app: NSRunningApplication) async -> String? {
         if ScreenSafety.neverWord(in: title) != nil { return "“\(title)” is never pressed by Bibbles" }
         guard ScreenSafety.blockedWord(in: title) != nil else { return nil }
-        return confirm("\(verb) “\(title)”", app) ? nil : "you stopped before “\(title)”"
+        return await confirm("\(verb) “\(title)”", app) ? nil : "you stopped before “\(title)”"
     }
 
     func stop() { stopRequested = true }
@@ -2072,13 +2073,13 @@ final class ScreenExecutor {
         switch action {
         case .menu(let path):
             guard let item = ScreenAX.menuItem(path, in: app) else { return "couldn't find \(path.joined(separator: " ▸ "))" }
-            if let problem = askFirstIfFinal(ScreenAX.title(item), verb: "Choose", in: app) { return problem }
+            if let problem = await askFirstIfFinal(ScreenAX.title(item), verb: "Choose", in: app) { return problem }
             guard ScreenAX.press(item) else { return "couldn't choose \(path.last ?? "")" }
             try? await Task.sleep(nanoseconds: 700_000_000)
         case .press(let title):
             guard let found = await ScreenAX.findControl(title, in: app) else { return "couldn't find “\(title)”" }
             // The screen may have changed since the preview.
-            if let problem = askFirstIfFinal(found.control.title, verb: "Press", in: app) { return problem }
+            if let problem = await askFirstIfFinal(found.control.title, verb: "Press", in: app) { return problem }
             // Pressing Save in a sheet: remember the name to find the file afterwards.
             let savingName = ScreenSafety.saveButtons.contains(ScreenAX.normalized(found.control.title))
                 ? ScreenAX.saveSheet(in: app).flatMap { ScreenAX.nameField(in: $0) }.flatMap { ScreenAX.string($0, kAXValueAttribute) } : nil
@@ -2117,7 +2118,7 @@ final class ScreenExecutor {
             guard let found = await ScreenAX.findControl(title, roles: ["AXCheckBox", "AXRadioButton"], in: app, timeout: 2) else {
                 return "couldn't find “\(title)”"
             }
-            if let problem = askFirstIfFinal(found.control.title, verb: "Switch", in: app) { return problem }
+            if let problem = await askFirstIfFinal(found.control.title, verb: "Switch", in: app) { return problem }
             if found.control.isOn != on, !ScreenAX.press(found.element) { return "couldn't switch “\(title)”" }
         case .choose(let title, let option):
             guard let found = await ScreenAX.findControl(title, roles: ["AXPopUpButton", "AXMenuButton"], in: app, timeout: 2),
@@ -2168,7 +2169,7 @@ final class ScreenExecutor {
                 ScreenAX.scrollIntoView(found.element)
                 if ScreenSafety.neverWord(in: name) != nil { return "“\(name)” is never pressed by Bibbles" }
                 if isFinalStep || ScreenSafety.blockedWord(in: name) != nil {
-                    guard confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
+                    guard await confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
                 }
                 if ScreenAX.textRoles.contains(found.control.role) {
                     AXUIElementSetAttributeValue(found.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
@@ -2187,7 +2188,7 @@ final class ScreenExecutor {
             }
             if isFinalStep || ScreenSafety.blockedWord(in: underneath) != nil {
                 let name = [underneath, label].first { !$0.isEmpty } ?? "this"
-                guard confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
+                guard await confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
             }
             ScreenAX.click(at: point)
             try? await Task.sleep(nanoseconds: 450_000_000)
@@ -2206,7 +2207,7 @@ final class ScreenExecutor {
         case .key(let keys, let isFinalStep):
             guard let parsed = ScreenKeys.parse(keys) else { return "Bibbles doesn't press \(keys)" }
             if isFinalStep {
-                guard confirm("Press \(keys)", app) else { return "you stopped before \(keys)" }
+                guard await confirm("Press \(keys)", app) else { return "you stopped before \(keys)" }
                 // The question took the focus: put the cursor back where the text was typed.
                 if let lastTextElement {
                     AXUIElementSetAttributeValue(lastTextElement, kAXFocusedAttribute as CFString, kCFBooleanTrue)
@@ -2225,7 +2226,7 @@ final class ScreenExecutor {
             let names = [ScreenAX.titleAt(from) ?? "", ScreenAX.titleAt(to) ?? "", label]
             if isFinalStep || names.contains(where: { ScreenSafety.blockedWord(in: $0) != nil }) {
                 let name = names.first { !$0.isEmpty } ?? "this"
-                guard confirm("Drag “\(name)”", app) else { return "you stopped before dragging “\(name)”" }
+                guard await confirm("Drag “\(name)”", app) else { return "you stopped before dragging “\(name)”" }
             }
             ScreenAX.click(at: from)
             ScreenAX.mouse(at: from, down: true)

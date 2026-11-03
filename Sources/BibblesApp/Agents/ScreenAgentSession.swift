@@ -52,6 +52,11 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     private var work: Task<Void, Never>?
     private var log = AgentLogEntry(route: "agent_screen")
 
+    /// A final action (Send, Buy…) waiting for the user's OK, in the user's words
+    /// ("Press “Send” in Mail"). The robot shows a red 1; the card asks.
+    @Published private(set) var pendingConfirmation: String?
+    private var confirmation: CheckedContinuation<Bool, Never>?
+
     var onFinished: ((String) -> Void)?
     /// A plan is ready and waits for Start/Continue (said or clicked).
     var onWaiting: (() -> Void)?
@@ -66,6 +71,11 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
 
     /// "stop" / "continue" said while the task is open. Returns true when handled.
     func handle(_ command: AgentVoiceCommand) -> Bool {
+        if pendingConfirmation != nil {
+            answerConfirmation(command == .proceed)
+            if command == .stop { stop() }
+            return true
+        }
         switch command {
         case .stop:
             guard isActive else { return false }
@@ -252,12 +262,39 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         return CGPoint(x: position.x + size.width / 2, y: ScreenGeometry.primaryHeight - (position.y + size.height / 2))
     }
 
+    // MARK: Asking before final actions
+
+    /// Waits for the user's answer in the card (or by voice); Stop or Cancel answers no.
+    private func askUser(_ action: String, in app: NSRunningApplication) async -> Bool {
+        answerConfirmation(false)   // never two questions at once
+        pendingConfirmation = action + " in " + (app.localizedName ?? "this app")
+        onWaiting?()
+        let yes = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            confirmation = continuation
+        }
+        // The answer was given in Bibbles: put the user's app back in front for the step.
+        app.activate(options: [.activateIgnoringOtherApps])
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        return yes
+    }
+
+    func answerConfirmation(_ yes: Bool) {
+        guard let waiting = confirmation else { pendingConfirmation = nil; return }
+        confirmation = nil
+        pendingConfirmation = nil
+        waiting.resume(returning: yes)
+    }
+
     // MARK: Run
 
     /// Start / Continue: the only way anything happens on screen.
     func confirm() {
         guard phase == .preview, !preview.isEmpty, let app else { return }
         let executor = self.executor ?? ScreenExecutor(inserter: inserter)
+        executor.confirm = { [weak self] action, app in
+            guard let self else { return false }
+            return await self.askUser(action, in: app)
+        }
         self.executor = executor
         let actions = preview.actions
         let lines = preview.lines.map(\.text)
@@ -296,6 +333,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     }
 
     func stop() {
+        answerConfirmation(false)
         switch phase {
         case .running:
             executor?.stop()
@@ -354,6 +392,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     }
 
     func cancel() {
+        answerConfirmation(false)
         work?.cancel()
         executor?.stop()
     }

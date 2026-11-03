@@ -109,6 +109,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             #if BIBBLES_DEVELOPER
             // A Files agent run that can still be undone: show its Done · Undo card.
             if let session = AgentUndoRegistry.shared.session(forAnswer: item.answer) {
+                AgentRobotController.shared.follow(session)
                 self.agentPanel.show(session)
                 return
             }
@@ -2478,11 +2479,13 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             self.chatStore.recordExchange(userText: transcript, assistantText: summary)
             self.interaction.modelLabel = label
             if speak { self.voiceReply.speak(AgentSpeech.short(summary)) }
+            self.showAgentResult(summary)
         }
         activeFilesSession = session
         activeScreenSession = nil
         AgentRobotController.shared.follow(session)
-        agentPanel.show(session)
+        AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        agentPanel.attach(session)
         session.start()
     }
 
@@ -2502,16 +2505,22 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             self.chatStore.recordExchange(userText: transcript, assistantText: summary)
             self.interaction.modelLabel = label
             if speak { self.voiceReply.speak(AgentSpeech.short(summary)) }
+            self.showAgentResult(summary)
         }
         // Asked by voice: say when it waits, so "continue" can be said back.
         session.onWaiting = { [weak self, weak session] in
             guard speak, let self, let session else { return }
-            self.voiceReply.speak(session.round == 1 ? "Ready. Say continue to start, or stop." : "Ready for the next part. Say continue.")
+            if let ask = session.pendingConfirmation {
+                self.voiceReply.speak("Bibbles needs your OK: \(ask). Say continue or stop.")
+            } else {
+                self.voiceReply.speak(session.round == 1 ? "Ready. Say continue to start, or stop." : "Ready for the next part. Say continue.")
+            }
         }
         activeScreenSession = session
         activeFilesSession = nil
         AgentRobotController.shared.follow(session)
-        agentPanel.show(session)
+        AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        agentPanel.attach(session)
         session.start()
     }
 
@@ -2532,8 +2541,19 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         return true
     }
 
+    /// The robot disappears when an agent is done: with the card closed, the
+    /// result shows in Bibbles' answer card (Undo stays in task history and the menu).
+    private func showAgentResult(_ summary: String) {
+        guard !agentPanel.isVisible else { return }
+        interaction.transition(to: .transcript(summary, isFinal: true))
+        overlay.showNearCursor()
+        scheduleDismissal(afterNanoseconds: 6_000_000_000)
+    }
+
     @objc private func undoLastAgentTask() {
         guard let session = AgentUndoRegistry.shared.latest else { return }
+        AgentRobotController.shared.follow(session)
+        AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
         agentPanel.show(session)
         session.undo()
     }

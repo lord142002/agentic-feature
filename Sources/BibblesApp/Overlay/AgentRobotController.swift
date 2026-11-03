@@ -4,18 +4,19 @@ import Combine
 import ImageIO
 import QuartzCore
 
-/// The agent robot: a small animated robot in the top-right corner of the
-/// screen while an agent works (looking, planning, running, stopping, undoing).
-/// It hides when the agent waits for the user or finishes. Clicks pass through
-/// it, and Bibbles' own screenshots leave it out, so the agent never sees it.
+/// The agent robot, in the top-right corner of the screen while an agent task
+/// is open. It is the agent's only thing on screen:
+/// - working (looking, planning, running, stopping, undoing): the robot plays;
+/// - needs you (a plan to start, a "Send?" to answer, an error): a red 1 on it;
+/// - clicking it opens the agent card below it;
+/// - done: it disappears (the result shows in Bibbles' answer card).
+/// Bibbles' screenshots leave it out, so the agent never sees it.
 @MainActor
 final class AgentRobotController {
     static let shared = AgentRobotController()
 
     static let size = NSSize(width: 96, height: 96)
     static let margin: CGFloat = 12
-    /// Room the Screen agent's card leaves above itself for the robot.
-    static var reservedHeight: CGFloat { size.height + margin }
 
     /// Resources/AgentRobot.png: 72 frames of 192×192 pixels, 12 per row, 24 frames a second.
     static let frameSide = 192
@@ -23,34 +24,76 @@ final class AgentRobotController {
     static let frameCount = 72
     static let loopDuration: CFTimeInterval = 3
 
+    /// Clicking the robot (opens or closes the agent card).
+    var onClick: (() -> Void)?
+
     private var panel: NSPanel?
     private let robotLayer = CALayer()
+    private let badge = AgentRobotBadge()
     private var watch: AnyCancellable?
     private var hideWork: DispatchWorkItem?
     /// Changes on every show, so a fade-out that finishes late never hides a robot shown again.
     private var showCount = 0
+    /// An error the user has already seen and closed: no badge for it any more.
+    private var errorSeen = false
     private lazy var frames: [CGImage] = Self.loadFrames()
 
     private init() {}
 
     var isVisible: Bool { panel?.isVisible ?? false }
+    /// The robot's frame on screen (AppKit coordinates), for placing the card under it.
+    var frame: NSRect? { panel?.frame }
+
+    /// What the robot should show for an agent's state.
+    struct Look: Equatable {
+        var visible: Bool
+        var badge: Bool
+        /// Clicks pass through while the agent itself clicks on screen.
+        var clickThrough: Bool
+        static let hidden = Look(visible: false, badge: false, clickThrough: true)
+    }
+
+    nonisolated static func look(screen phase: ScreenAgentSession.Phase, asking: Bool, errorSeen: Bool) -> Look {
+        if asking { return Look(visible: true, badge: true, clickThrough: false) }
+        switch phase {
+        case .preview: return Look(visible: true, badge: true, clickThrough: false)
+        case .running, .stopping: return Look(visible: true, badge: false, clickThrough: true)
+        case .looking, .planning, .undoing: return Look(visible: true, badge: false, clickThrough: false)
+        case .failed: return errorSeen ? .hidden : Look(visible: true, badge: true, clickThrough: false)
+        case .done, .undone: return .hidden
+        }
+    }
+
+    nonisolated static func look(files phase: FilesAgentSession.Phase, errorSeen: Bool) -> Look {
+        switch phase {
+        case .preview: return Look(visible: true, badge: true, clickThrough: false)
+        case .running, .stopping: return Look(visible: true, badge: false, clickThrough: true)
+        case .scanning, .planning, .undoing: return Look(visible: true, badge: false, clickThrough: false)
+        case .failed: return errorSeen ? .hidden : Look(visible: true, badge: true, clickThrough: false)
+        case .done, .undone: return .hidden
+        }
+    }
 
     func follow(_ session: ScreenAgentSession) {
-        watch = session.$phase.sink { [weak self] phase in
-            switch phase {
-            case .looking, .planning, .running, .stopping, .undoing: self?.setWorking(true)
-            default: self?.setWorking(false)
-            }
+        errorSeen = false
+        watch = session.$phase.combineLatest(session.$pendingConfirmation).sink { [weak self] phase, asking in
+            guard let self else { return }
+            self.apply(Self.look(screen: phase, asking: asking != nil, errorSeen: self.errorSeen))
         }
     }
 
     func follow(_ session: FilesAgentSession) {
+        errorSeen = false
         watch = session.$phase.sink { [weak self] phase in
-            switch phase {
-            case .scanning, .planning, .running, .stopping, .undoing: self?.setWorking(true)
-            default: self?.setWorking(false)
-            }
+            guard let self else { return }
+            self.apply(Self.look(files: phase, errorSeen: self.errorSeen))
         }
+    }
+
+    /// The card was closed: an error has been seen, and a task that isn't working any more ends.
+    func cardClosed(stillWorking: Bool) {
+        errorSeen = true
+        if !stillWorking { apply(.hidden) }
     }
 
     /// Runs `body` with the robot briefly hidden (an Accessibility look at a
@@ -62,17 +105,19 @@ final class AgentRobotController {
         return body()
     }
 
-    private func setWorking(_ working: Bool) {
+    private func apply(_ look: Look) {
         hideWork?.cancel()
         hideWork = nil
-        if working {
-            show()
-        } else {
+        guard look.visible else {
             // A short pause, so the robot doesn't flicker between an agent's parts.
             let work = DispatchWorkItem { [weak self] in self?.hide() }
             hideWork = work
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+            return
         }
+        show()
+        panel?.ignoresMouseEvents = look.clickThrough
+        badge.isHidden = !look.badge
     }
 
     private func show() {
@@ -114,6 +159,7 @@ final class AgentRobotController {
                 guard let self, self.showCount == shown else { return }
                 panel.orderOut(nil)
                 self.robotLayer.removeAllAnimations()
+                self.badge.isHidden = true
             }
         })
     }
@@ -144,13 +190,17 @@ final class AgentRobotController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
-        let view = NSView(frame: NSRect(origin: .zero, size: Self.size))
+        let view = AgentRobotView(frame: NSRect(origin: .zero, size: Self.size))
+        view.onClick = { [weak self] in self?.onClick?() }
         view.wantsLayer = true
-        view.setAccessibilityElement(false)
         robotLayer.frame = view.bounds
         robotLayer.contentsGravity = .resizeAspect
         robotLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
         view.layer?.addSublayer(robotLayer)
+        // The red 1, at the robot's top right.
+        badge.frame = NSRect(x: Self.size.width - 30, y: Self.size.height - 30, width: 22, height: 22)
+        badge.isHidden = true
+        view.addSubview(badge)
         panel.contentView = view
         return panel
     }
@@ -170,5 +220,40 @@ final class AgentRobotController {
             return sheet.cropping(to: rect)
         }
     }
+}
+
+/// The robot's view: a click opens the agent card; a pointing hand shows it can be clicked.
+private final class AgentRobotView: NSView {
+    var onClick: (() -> Void)?
+
+    override func mouseDown(with event: NSEvent) { onClick?() }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? { "Bibbles agent" }
+    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
+}
+
+/// The red "1": the agent needs you.
+private final class AgentRobotBadge: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.systemRed.cgColor
+        layer?.cornerRadius = 11
+        layer?.borderColor = NSColor.white.cgColor
+        layer?.borderWidth = 2
+        let label = NSTextField(labelWithString: "1")
+        label.font = .systemFont(ofSize: 12, weight: .bold)
+        label.textColor = .white
+        label.alignment = .center
+        label.frame = NSRect(x: 0, y: 3, width: 22, height: 16)
+        addSubview(label)
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) { nil }
 }
 #endif
