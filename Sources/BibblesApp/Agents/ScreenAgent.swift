@@ -260,6 +260,15 @@ enum ScreenPlanParser {
             object["x"] = pair[0]
             object["y"] = pair[1]
         }
+        // "x": [512, 300] or "x": "512, 300": both numbers in one field.
+        if object["y"] == nil, let pair = object["x"] as? [Any], pair.count == 2 {
+            object["x"] = pair[0]
+            object["y"] = pair[1]
+        }
+        if object["y"] == nil, let text = object["x"] as? String {
+            let numbers = text.split(whereSeparator: { $0 == "," || $0 == " " }).compactMap { Double($0) }
+            if numbers.count == 2 { object["x"] = numbers[0]; object["y"] = numbers[1] }
+        }
         if object["x"] == nil, let point = object["point"] as? [String: Any] ?? object["position"] as? [String: Any] {
             object["x"] = point["x"]
             object["y"] = point["y"]
@@ -300,7 +309,11 @@ enum ScreenPlanParser {
                                        "switch_app": "an app name", "remember": "text", "attach": "a file name",
                                        "open_file": "a file name", "compose_email": "recipients, a subject or a body"]
         let had = raw.filter { !($0.value is NSNull) }.keys.filter { $0 != "action" }.sorted().prefix(5).joined(separator: ", ")
-        return "“\(name)” is missing \(needs[name] ?? "details")" + (had.isEmpty ? "" : " (it had: \(had))")
+        var shown = ""
+        if ["click", "double_click", "drag"].contains(name), let x = raw["x"], !(x is NSNull) {
+            shown = "; x was \(String(describing: x).prefix(30)), y was \(raw["y"].map { String(describing: $0).prefix(30) } ?? "missing")"
+        }
+        return "“\(name)” is missing \(needs[name] ?? "details")" + (had.isEmpty ? "" : " (it had: \(had)\(shown))")
     }
 
     /// {"x","y"} or {"key"}, plus optional "keys"/"points" pressed together,
@@ -1139,7 +1152,7 @@ struct ScreenSnapshot {
         case field(FormField)
     }
 
-    static let describedControls = 120
+    static let describedControls = 180
     static let describedFields = 40
 
     /// Items numbered as in the description: buttons and other controls from 1, then fields.
@@ -1158,6 +1171,7 @@ struct ScreenSnapshot {
         let menuLines = menus.prefix(250).map { $0.path.joined(separator: " > ") + ($0.enabled ? "" : " (greyed out)") }
         let shownControls = controls.prefix(Self.describedControls)
         let controlLines = shownControls.enumerated().map { index, control -> String in
+            if control.role == "AXStaticText" { return "[\(index + 1)] text: \"\(control.title)\"" + position(control.center) }
             var line = "[\(index + 1)] \(ScreenAX.kind(control.role)): \(control.title)" + position(control.center)
             if let isOn = control.isOn { line += isOn ? " [on]" : " [off]" }
             if !control.options.isEmpty { line += " options: " + control.options.prefix(30).joined(separator: " | ") }
@@ -1196,6 +1210,7 @@ enum ScreenAX {
         case "AXRadioButton": return "tab/option"
         case "AXPopUpButton", "AXMenuButton": return "pop-up"
         case "AXLink": return "link"
+        case "AXStaticText": return "text"
         default: return "button"
         }
     }
@@ -1264,12 +1279,14 @@ enum ScreenAX {
         AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         let deadline = Date().addingTimeInterval(1.2)
         let menuItems = menus(of: appElement, deadline: deadline)
-        var found = controls(of: app, deadline: Date().addingTimeInterval(2.5)).map(\.control)
+        var found = controls(of: app, deadline: Date().addingTimeInterval(2.5), includeTexts: true).map(\.control)
         // A browser that was just asked builds its page tree a moment later: look once more.
         if found.count < 6, browserBundles.contains(app.bundleIdentifier ?? "") {
             try? await Task.sleep(nanoseconds: 900_000_000)
-            found = controls(of: app, deadline: Date().addingTimeInterval(2.5)).map(\.control)
+            found = controls(of: app, deadline: Date().addingTimeInterval(2.5), includeTexts: true).map(\.control)
         }
+        // Buttons get the first numbers; visible text follows.
+        found = found.filter { $0.role != "AXStaticText" } + found.filter { $0.role == "AXStaticText" }
         let fields = FormFieldScanner().fields(in: app, limit: 40)
         var centers: [Int: CGPoint] = [:]
         for field in fields { centers[field.id] = center(of: field.element) }
@@ -1306,18 +1323,32 @@ enum ScreenAX {
     nonisolated static let textRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
 
     /// Big web pages (Gmail) have deep trees: read them further than ordinary windows.
+    static let textLimit = 60
+
     static func controls(of app: NSRunningApplication, deadline: Date, roles: Set<String> = controlRoles,
                          limit: Int = 200, budget startBudget: Int = 15_000,
-                         maxDepth: Int = 60) -> [(control: ScreenControl, element: AXUIElement)] {
+                         maxDepth: Int = 60, includeTexts: Bool = false) -> [(control: ScreenControl, element: AXUIElement)] {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
         guard let window = element(appElement, kAXFocusedWindowAttribute) else { return [] }
         var found: [(control: ScreenControl, element: AXUIElement)] = []
+        var texts = 0
+        let windowFrame = frame(of: window)
         var budget = startBudget
         func visit(_ node: AXUIElement, depth: Int) {
             guard budget > 0, depth < maxDepth, found.count < limit, Date() < deadline else { return }
             budget -= 1
             let role = string(node, kAXRoleAttribute) ?? ""
+            // Text on the page (a heading on a canvas): only what is visible in the window, by its exact position.
+            if includeTexts, role == "AXStaticText" {
+                if texts < textLimit, let value = string(node, kAXValueAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !value.isEmpty, let middle = center(of: node), windowFrame?.contains(middle) ?? false,
+                   !found.contains(where: { $0.control.title == String(value.prefix(80)) && $0.control.center == middle }) {
+                    texts += 1
+                    found.append((ScreenControl(role: role, title: String(value.prefix(80)), isOn: nil, options: [], center: middle), node))
+                }
+                return
+            }
             if roles.contains(role) {
                 let name = title(node)
                 if !name.isEmpty, (value(node, kAXEnabledAttribute) as? Bool) ?? true {
@@ -1537,6 +1568,17 @@ enum ScreenAX {
     static func windowCenter(of app: NSRunningApplication) -> CGPoint? {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         return element(appElement, kAXFocusedWindowAttribute).flatMap { center(of: $0) }
+    }
+
+    /// An element's rectangle on screen (top-left origin), from Accessibility.
+    static func frame(of element: AXUIElement) -> CGRect? {
+        guard let rawPosition = value(element, kAXPositionAttribute), let rawSize = value(element, kAXSizeAttribute),
+              CFGetTypeID(rawPosition) == AXValueGetTypeID(), CFGetTypeID(rawSize) == AXValueGetTypeID() else { return nil }
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(unsafeBitCast(rawPosition, to: AXValue.self), .cgPoint, &position)
+        AXValueGetValue(unsafeBitCast(rawSize, to: AXValue.self), .cgSize, &size)
+        return CGRect(origin: position, size: size)
     }
 
     /// The middle of an element on screen (top-left origin), from Accessibility.
@@ -2106,7 +2148,7 @@ enum ScreenAgentPrompt {
         - toggle {"target":"Remember me","on":false}; choose {"target":"Country","option":"India"}.
         - save {"folder":"Desktop","name":"holi final"}: in an open save/export sheet; folder and name only when the user said them.
         - click {"x":512,"y":300,"label":"Search box"}: a point on the SCREENSHOT, x and y from 0 to 1000 (top-left is 0,0). Use it for things the description doesn't list (web pages, canvases). Aim at the centre of the target.
-        - double_click {"element":7,"label":"Summer Sale"} or {"x":512,"y":300,"label":"Heading"}: a real double-click. In design apps (Canva, Figma, Google Slides, Keynote, Photoshop) a text box on the canvas must be double-clicked before typing: a newly added text box ("Add a heading") is only selected, not being edited. To replace its words: double_click it, key "cmd+a", then type.
+        - double_click {"element":7,"label":"Summer Sale"} or {"x":512,"y":300,"label":"Heading"}: a real double-click. Prefer the element number of the text item (text: "Add a heading") over x/y: it is exact. In design apps (Canva, Figma, Google Slides, Keynote, Photoshop) a text box on the canvas must be double-clicked before typing: a newly added text box ("Add a heading") is only selected, not being edited. To replace its words: double_click it, key "cmd+a", then type.
         - type {"text":"Hello Sam, …"}: types text where the cursor is (click the field first, with a label naming it, e.g. "Message body"). You may write new text (an email, a message, a search) when the user asked for it. Don't sign it with the user's name unless they asked.
         - click {"element":7,"label":"Reply"}: the item numbered [7] in the description. Use this for anything listed with a number: it is exact. Use x/y only for things the description doesn't list.
         Always give click steps a "label" with the button's or field's visible name ("Reply", "Send", "Message body"): Bibbles presses it by that name when it can, which is exact.
@@ -2121,7 +2163,7 @@ enum ScreenAgentPrompt {
         - attach {"name":"resume","folder":"Downloads"}: attaches the newest file whose name has these words. In Apple Mail just click the message body first. On websites (Gmail, Outlook) first click the paperclip / "Attach files" button in one answer, then "attach" in the same answer right after it: Bibbles fills the file window. Bibbles finds the file on the Mac; never write a path.
         - compose_email {"recipients":"sam@x.com","subject":"Invoice total","body":"Hi Sam,\n\n…"}: writes an email in the open compose window (Apple Mail, Gmail, Outlook). Bibbles puts each part in its own box (To, Subject, message). ALWAYS use this for emails, never fill/type for them. recipients: only addresses the user said. Write the full body yourself, following what the user asked for. You can use it from ANY app: when no compose window is open, Bibbles opens a new message in the user's mail app with every part filled in, so never switch to Mail or open a new message first. In Gmail or Outlook on the web, click Compose first and set "done": false.
         For other forms, put text into a listed field with fill and its exact label.
-        Items: the description numbers every button and field it can see ([n]) and gives "@ x,y" (0-1000 on the screenshot) for those on screen. To click a listed item use {"element": n} with its exact name as the label.
+        Items: the description numbers every button, field and visible piece of text (text: "…", e.g. a heading on a Canva page) it can see ([n]) and gives "@ x,y" (0-1000 on the screenshot) for those on screen. To click a listed item use {"element": n} with its exact name as the label.
         - mac {"tool":"open_website","input":{"url":"https://…"}} | set_dark_mode {"mode":"on|off|toggle"} | set_volume {"action":"set|up|down|mute|unmute","level":0-100} | set_brightness {"action":"up|down"} | open_app {"name"}.
         Prefer menu, press, fill and save (exact) over click (approximate). For Mac-wide dark mode, volume or brightness use one mac step.
         To use the user's own details write ONLY placeholders: {{firstName}} {{lastName}} {{fullName}} {{email}} {{phone}} {{street}} {{city}} {{postalCode}} {{country}} {{company}} {{jobTitle}} {{website}}. You never see the values. Never fill passwords, card, bank, ID or one-time-code fields.
@@ -2559,9 +2601,11 @@ final class ScreenExecutor {
             try? await Task.sleep(nanoseconds: 450_000_000)
         case .doubleClick(let planned, let label, let isFinalStep):
             var point = planned
+            // The same name elsewhere (the side panel's "Add a heading" button) is not the target: only a match right there.
             if !label.isEmpty,
                let found = await ScreenAX.findControl(label, roles: ScreenAX.controlRoles.union(ScreenAX.textRoles), in: app,
-                                                      timeout: 1, near: planned) {
+                                                      timeout: 1, near: planned),
+               let spot = found.control.center, hypot(spot.x - planned.x, spot.y - planned.y) < 40 {
                 ScreenAX.scrollIntoView(found.element)
                 try? await Task.sleep(nanoseconds: 250_000_000)
                 point = ScreenAX.center(of: found.element) ?? planned

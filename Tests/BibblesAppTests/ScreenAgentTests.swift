@@ -863,6 +863,27 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertEqual(ScreenAction.doubleClick(.zero, label: "", final: false).kindName, "doubleClick")
     }
 
+    func testPositionsInOneFieldAreRead() {
+        let text = #"{"summary":"","steps":[{"action":"click","x":[500,250],"label":"A"},{"action":"double_click","x":"100, 200","label":"B"},{"action":"click","x":700,"label":"C"}]}"#
+        let parsed = ScreenPlanParser.parse(text)
+        XCTAssertEqual(parsed.plan?.steps, [.click(x: 0.5, y: 0.25, label: "A", final: false),
+                                            .doubleClick(x: 0.1, y: 0.2, element: nil, label: "B")])
+        XCTAssertTrue(parsed.dropped.first?.reason.contains("x was 700, y was missing") == true, parsed.dropped.first?.reason ?? "")
+    }
+
+    @MainActor
+    func testVisibleTextIsNumberedForExactDoubleClicks() {
+        let heading = CGPoint(x: 700, y: 420)
+        let screen = snapshot(controls: [ScreenControl(role: "AXButton", title: "Add a heading", isOn: nil, options: [], center: CGPoint(x: 90, y: 300)),
+                                         ScreenControl(role: "AXStaticText", title: "Add a heading", isOn: nil, options: [], center: heading)])
+        XCTAssertTrue(screen.describe(details: me).contains(#"[2] text: "Add a heading""#))
+        let preview = ScreenPlanValidator.preview(ScreenPlan(summary: "", steps: [.doubleClick(x: nil, y: nil, element: 2, label: "")]),
+                                                  snapshot: screen, request: "add a heading", details: me)
+        guard case .doubleClick(let point, let label, _)? = preview.actions.first else { return XCTFail("double-click") }
+        XCTAssertEqual(point, heading, "the text on the page, not the side panel's button with the same words")
+        XCTAssertEqual(label, "Add a heading")
+    }
+
     // MARK: - Shorter history for long tasks
 
     func testLongHistoryIsShortenedButFactsAreKept() {
