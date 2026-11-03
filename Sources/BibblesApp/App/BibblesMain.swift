@@ -2485,6 +2485,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         activeScreenSession = nil
         AgentRobotController.shared.follow(session)
         AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        AgentRobotController.shared.onHide = { [weak self] in self?.agentPanel.hideCard() }
         agentPanel.attach(session)
         session.start()
     }
@@ -2520,6 +2521,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         activeFilesSession = nil
         AgentRobotController.shared.follow(session)
         AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        AgentRobotController.shared.onHide = { [weak self] in self?.agentPanel.hideCard() }
         agentPanel.attach(session)
         session.start()
     }
@@ -2554,6 +2556,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         guard let session = AgentUndoRegistry.shared.latest else { return }
         AgentRobotController.shared.follow(session)
         AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        AgentRobotController.shared.onHide = { [weak self] in self?.agentPanel.hideCard() }
         agentPanel.show(session)
         session.undo()
     }

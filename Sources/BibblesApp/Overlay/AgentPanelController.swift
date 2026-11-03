@@ -83,6 +83,11 @@ final class AgentPanelController {
         AgentRobotController.shared.cardClosed(stillWorking: stillWorking)
     }
 
+    /// Just hides the card (the robot was hidden); the task itself is not touched.
+    func hideCard() {
+        panel.orderOut(nil)
+    }
+
     private func setContent<Content: View>(_ card: Content) {
         let root = card
             .background(GeometryReader { proxy in

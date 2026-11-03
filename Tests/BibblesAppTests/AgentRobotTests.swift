@@ -36,10 +36,11 @@ final class AgentRobotTests: XCTestCase {
         XCTAssertEqual(Robot.look(screen: .running(done: 2, total: 3), asking: true, errorSeen: false),
                        .init(visible: true, badge: true, clickThrough: false))
         XCTAssertEqual(Robot.look(screen: .failed("x"), asking: false, errorSeen: false).badge, true)
-        XCTAssertEqual(Robot.look(screen: .failed("x"), asking: false, errorSeen: true), .hidden)
-        // Done: the robot disappears.
-        XCTAssertEqual(Robot.look(screen: .done, asking: false, errorSeen: false), .hidden)
-        XCTAssertEqual(Robot.look(files: .done, errorSeen: false), .hidden)
+        XCTAssertEqual(Robot.look(screen: .failed("x"), asking: false, errorSeen: true), .resting)
+        // Done: the robot stays, resting, until the user hides it (right-click).
+        XCTAssertEqual(Robot.look(screen: .done, asking: false, errorSeen: false), .resting)
+        XCTAssertEqual(Robot.look(files: .done, errorSeen: false), .resting)
+        XCTAssertEqual(Robot.Look.resting, .init(visible: true, badge: false, clickThrough: false))
         XCTAssertEqual(Robot.look(files: .preview, errorSeen: false).badge, true)
         XCTAssertEqual(Robot.look(files: .scanning, errorSeen: false), .init(visible: true, badge: false, clickThrough: false))
     }
