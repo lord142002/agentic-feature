@@ -769,5 +769,150 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertNotNil(ScreenKeys.parse("cmd+s"))
         XCTAssertNotNil(ScreenKeys.parse("return"))
     }
+
+    // MARK: - Numbered items
+
+    func testDescriptionNumbersControlsThenFields() {
+        let screen = snapshot(fields: [field(10, "Email")],
+                              controls: [ScreenControl(role: "AXButton", title: "Reply", isOn: nil, options: []),
+                                         ScreenControl(role: "AXCheckBox", title: "Remember me", isOn: true, options: [])])
+        let text = screen.describe(details: me)
+        XCTAssertTrue(text.contains("[1] button: Reply"))
+        XCTAssertTrue(text.contains("[2] checkbox: Remember me"))
+        XCTAssertTrue(text.contains("[3] field: Email"))
+        guard case .control(let first)? = screen.item(1) else { return XCTFail("item 1") }
+        XCTAssertEqual(first.title, "Reply")
+        guard case .field(let box)? = screen.item(3) else { return XCTFail("item 3") }
+        XCTAssertEqual(box.id, 10)
+        XCTAssertNil(screen.item(0))
+        XCTAssertNil(screen.item(4))
+    }
+
+    func testParsesClickByNumber() {
+        let text = #"{"summary":"","steps":[{"action":"click","element":7,"label":"Reply","x":null,"y":null},{"action":"click","element":3,"x":100,"y":200,"label":"Send","final":true},{"action":"click","element":0,"x":500,"y":500}]}"#
+        XCTAssertEqual(ScreenPlanParser.parse(text).plan?.steps, [
+            .clickItem(7, label: "Reply", final: false),
+            .clickItem(3, label: "Send", final: true),
+            .click(x: 0.5, y: 0.5, label: "", final: false)
+        ], "a number wins over x/y; 0 is not a number")
+    }
+
+    @MainActor
+    func testClickByNumberUsesTheRealItem() {
+        let reply = CGPoint(x: 300, y: 400)
+        var screen = snapshot(fields: [field(10, "Message body"), field(11, "Notes")],
+                              controls: [ScreenControl(role: "AXButton", title: "Reply", isOn: nil, options: [], center: reply),
+                                         ScreenControl(role: "AXButton", title: "Delete Account", isOn: nil, options: [], center: .zero),
+                                         ScreenControl(role: "AXButton", title: "Send", isOn: nil, options: [], center: CGPoint(x: 9, y: 9)),
+                                         ScreenControl(role: "AXButton", title: "Help", isOn: nil, options: [])])
+        screen.fieldCenters = [10: CGPoint(x: 50, y: 60)]
+        let plan = ScreenPlan(summary: "", steps: [.clickItem(1, label: "wrong name", final: false), .clickItem(2, label: "", final: false),
+                                                   .clickItem(4, label: "", final: false), .clickItem(5, label: "", final: false),
+                                                   .clickItem(6, label: "", final: false), .clickItem(99, label: "", final: false)])
+        let preview = ScreenPlanValidator.preview(plan, snapshot: screen, request: "reply", details: me)
+        XCTAssertEqual(preview.lines.map(\.text), ["Click “Reply”", "Press “Help”", "Click “Message body”"],
+                       "the item's real name is used, not the plan's label")
+        guard case .click(let point, let label, _)? = preview.actions.first else { return XCTFail("click") }
+        XCTAssertEqual(point, reply)
+        XCTAssertEqual(label, "Reply")
+        XCTAssertEqual(preview.dropped.map(\.index), [1, 4], "never pressed, field off screen")
+        XCTAssertTrue(preview.looksAgain, "an unknown number after a click: the screen may have changed, look again")
+        let unknown = ScreenPlanValidator.preview(ScreenPlan(summary: "", steps: [.clickItem(99, label: "", final: false)]),
+                                                  snapshot: screen, request: "reply", details: me)
+        XCTAssertEqual(unknown.dropped.map(\.reason), ["there's no item 99 on screen"])
+
+        let send = ScreenPlanValidator.preview(ScreenPlan(summary: "", steps: [.clickItem(3, label: "", final: false)]),
+                                               snapshot: screen, request: "reply and send", details: me)
+        XCTAssertTrue(send.lines.first?.asksFirst == true, "Send asks first even when the plan didn't say final")
+    }
+
+    // MARK: - Shorter history for long tasks
+
+    func testLongHistoryIsShortenedButFactsAreKept() {
+        XCTAssertEqual(ScreenAgentPrompt.compactHistory([]), "nothing yet")
+        XCTAssertEqual(ScreenAgentPrompt.compactHistory(["Click “Reply”", "Press return"]), "Click “Reply”; Press return")
+
+        var history = (1...10).map { "Click “Row \($0)”" } + ["Remember: Total: £600.00"] + (1...5).map { _ in "Scroll down" }
+        history += (1...12).map { "Press \($0 % 2 == 0 ? "tab" : "return")" }
+        let text = ScreenAgentPrompt.compactHistory(history)
+        XCTAssertTrue(text.hasPrefix("earlier 15 steps (10× Click, 5× Scroll)"), text)
+        XCTAssertTrue(text.contains("Remember: Total: £600.00"), "remembered facts are never shortened away")
+        XCTAssertFalse(text.contains("Row 3"))
+        XCTAssertEqual(text.components(separatedBy: "; ").filter { $0.hasPrefix("Press") }.count, 12, "the latest 12 steps in full")
+
+        let long = String(repeating: "a", count: 500)
+        XCTAssertLessThan(ScreenAgentPrompt.compactHistory(["Type “\(long)”"]).count, 200)
+    }
+
+    // MARK: - Task memory
+
+    private func withMemory(_ body: () throws -> Void) rethrows {
+        let suite = "BibblesTests.memory.\(UUID().uuidString)"
+        let previous = ScreenPlanMemory.defaults
+        ScreenPlanMemory.defaults = UserDefaults(suiteName: suite)!
+        defer {
+            ScreenPlanMemory.defaults.removePersistentDomain(forName: suite)
+            ScreenPlanMemory.defaults = previous
+        }
+        try body()
+    }
+
+    func testAPlanThatWorkedIsReusedForTheSameRequestInTheSameApp() {
+        withMemory {
+            let plan = ScreenPlan(summary: "Dark mode on", steps: [
+                .menu(["File", "Export as PDF…"]), .press("Save"), .toggle("Remember me", on: false),
+                .choose("Country", option: "India"), .fill(field: "Email", value: "{{email}}"), .key("cmd+s", final: false),
+                .save(folder: "Desktop", name: nil), .wait(500),
+                .mac(AgentToolCall(name: "set_volume", input: ["action": .string("set"), "level": .number(40)]))
+            ])
+            let request = "Export this to PDF on my Desktop, country India"
+            XCTAssertTrue(ScreenPlanMemory.remember(plan, app: "com.apple.Preview", request: request))
+            XCTAssertEqual(ScreenPlanMemory.recall(app: "com.apple.Preview", request: "  export this to pdf on my desktop,   country india "),
+                           ScreenPlan(summary: "Dark mode on", steps: plan.steps), "same words, any case or spacing")
+            XCTAssertNil(ScreenPlanMemory.recall(app: "com.apple.TextEdit", request: request), "only in the same app")
+            XCTAssertNil(ScreenPlanMemory.recall(app: "com.apple.Preview", request: "export this to PNG"))
+
+            ScreenPlanMemory.forget(app: "com.apple.Preview", request: request)
+            XCTAssertNil(ScreenPlanMemory.recall(app: "com.apple.Preview", request: request), "a plan that failed is forgotten")
+        }
+    }
+
+    func testOnlySafeNameBasedPlansAreRemembered() {
+        withMemory {
+            let request = "reply to sam with hello and send it"
+            let unsafe: [ScreenStep] = [
+                .type("hello"), .click(x: 0.5, y: 0.5, label: "Reply", final: false), .clickItem(3, label: "Reply", final: false),
+                .fill(field: "Name", value: "Mohit Singh"), .fill(field: "Name", value: "{{firstName}} Singh"),
+                .key("return", final: true), .press("Send"), .choose("Country", option: "Germany"),
+                .composeEmail(recipients: "sam@x.com", subject: nil, body: "hello"), .remember("Total: 5"),
+                .mac(AgentToolCall(name: "open_website", input: ["url": .string("https://example.com")])),
+                .scroll(direction: "down", amount: 3, x: nil, y: nil), .switchApp("Mail")
+            ]
+            for step in unsafe {
+                XCTAssertFalse(ScreenPlanMemory.remember(ScreenPlan(summary: "", steps: [.menu(["Edit", "Copy"]), step]),
+                                                         app: "com.apple.mail", request: request), "\(step)")
+            }
+            XCTAssertFalse(ScreenPlanMemory.remember(ScreenPlan(summary: "", steps: [.menu(["Edit", "Copy"])], done: false),
+                                                     app: "com.apple.mail", request: request), "only plans that finished the task")
+            XCTAssertTrue(ScreenPlanMemory.entries().isEmpty)
+
+            XCTAssertTrue(ScreenPlanMemory.remember(ScreenPlan(summary: "", steps: [.fill(field: "Name", value: "{{firstName}} {{lastName}}")]),
+                                                    app: "com.apple.Safari", request: "fill my name"))
+            let stored = ScreenPlanMemory.entries().map { $0.key + $0.plan }.joined()
+            XCTAssertFalse(stored.contains("fill my name"), "the request is stored only as a hash")
+            XCTAssertFalse(stored.contains("Mohit"))
+        }
+    }
+
+    func testTaskMemoryKeepsOnlyTheLatestPlans() {
+        withMemory {
+            for number in 0..<(ScreenPlanMemory.limit + 5) {
+                ScreenPlanMemory.remember(ScreenPlan(summary: "", steps: [.press("Next")]), app: "com.apple.Safari", request: "task \(number)")
+            }
+            XCTAssertEqual(ScreenPlanMemory.entries().count, ScreenPlanMemory.limit)
+            XCTAssertNotNil(ScreenPlanMemory.recall(app: "com.apple.Safari", request: "task \(ScreenPlanMemory.limit + 4)"))
+            XCTAssertNil(ScreenPlanMemory.recall(app: "com.apple.Safari", request: "task 0"), "the oldest are dropped")
+        }
+    }
 }
 #endif
