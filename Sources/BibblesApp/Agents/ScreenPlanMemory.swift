@@ -114,7 +114,7 @@ enum ScreenPlanMemory {
                 }
             }
             return ["action": "mac", "tool": call.name, "input": input]
-        case .click, .clickItem, .type, .play, .drag, .scroll, .switchApp, .remember, .attach, .openFile, .composeEmail:
+        case .click, .clickItem, .doubleClick, .type, .play, .drag, .scroll, .switchApp, .remember, .attach, .openFile, .composeEmail:
             return nil
         }
     }

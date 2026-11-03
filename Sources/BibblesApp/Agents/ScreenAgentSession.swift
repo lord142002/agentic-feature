@@ -61,6 +61,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     private var usedMemory = false
     /// The app the task started in (task memory is per app).
     private var startBundleID: String?
+    /// Times typing couldn't start and Bibbles looked again instead.
+    private var lookAgainCount = 0
 
     /// A final action (Send, Buy…) waiting for the user's OK, in the user's words
     /// ("Press “Send” in Mail"). The robot shows a red 1; the card asks.
@@ -125,6 +127,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         totalStepsDone = 0
         firstPlan = nil
         usedMemory = false
+        lookAgainCount = 0
         startBundleID = app?.bundleIdentifier
         startedAt = Date()
         log = AgentLogEntry(route: "agent_screen", layer: layer)
@@ -341,7 +344,17 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
             self.log.executeMilliseconds = (self.log.executeMilliseconds ?? 0) + Int(Date().timeIntervalSince(roundStarted) * 1000)
             let outOfTime = Date().timeIntervalSince(self.startedAt) > Self.maxDuration
             let outOfBudget = self.totalStepsDone >= Self.maxTotalSteps
-            if roundResult.stopped || roundResult.firstError != nil || self.planDone || self.round >= Self.maxRounds || outOfTime || outOfBudget {
+            // Typing couldn't start: look at the screen again (twice at most) and plan from there.
+            if let note = roundResult.lookAgainNote {
+                self.lookAgainCount += 1
+                if self.lookAgainCount > 2 {
+                    self.result.firstError = self.result.firstError ?? note
+                } else {
+                    self.history.append("Not done: " + note)
+                    self.planDone = false
+                }
+            }
+            if roundResult.stopped || roundResult.firstError != nil || self.result.firstError != nil || self.planDone || self.round >= Self.maxRounds || outOfTime || outOfBudget {
                 if !self.planDone, self.round >= Self.maxRounds || outOfTime { self.result.stopped = true }
                 if outOfBudget, !self.planDone {
                     self.result.stopped = true
@@ -410,7 +423,10 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
             sentences.append("Skipped \(skipped.count) step\(skipped.count == 1 ? "" : "s"): \(skipped[0]).")
         }
         if result.unverified > 0 { sentences.append("\(result.unverified) action\(result.unverified == 1 ? "" : "s") couldn't be verified.") }
-        if let problem = result.firstError { sentences.append("Stopped: \(problem).") }
+        if let problem = result.firstError {
+            sentences.append("Stopped: \(problem).")
+            if let last = history.last(where: { !$0.hasPrefix("Not done: ") }) { sentences.append("Last step done: \(last).") }
+        }
         else if result.stopped { sentences.append(strings.stopped(result.done, result.total)) }
         resultSummary = sentences.isEmpty ? strings.nothing : sentences.joined(separator: " ")
         canUndo = !result.previousValues.isEmpty || result.darkModeBefore != nil

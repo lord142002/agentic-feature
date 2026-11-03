@@ -33,6 +33,8 @@ enum ScreenStep: Equatable {
     case click(x: Double, y: Double, label: String, final: Bool)
     /// A click on an item by its number in the screen description ("[7] button: Reply").
     case clickItem(Int, label: String, final: Bool)
+    /// A double-click (by item number, or a point): starts editing text on a canvas (Canva, Figma, Keynote).
+    case doubleClick(x: Double?, y: Double?, element: Int?, label: String)
     /// Types text where the cursor is.
     case type(String)
     /// A key or shortcut ("return", "cmd+l").
@@ -203,10 +205,11 @@ enum ScreenPlanParser {
         return ScreenParseResult(plan: ScreenPlan(summary: String(summary.prefix(300)), steps: steps, done: done), dropped: dropped)
     }
 
-    static let actions = ["menu", "press", "fill", "toggle", "choose", "mac", "save", "click", "type", "key", "play", "wait", "drag",
+    static let actions = ["menu", "press", "fill", "toggle", "choose", "mac", "save", "click", "double_click", "type", "key", "play", "wait", "drag",
                           "scroll", "switch_app", "remember", "attach", "open_file", "compose_email"]
     /// Small, unambiguous slips a model makes, mapped to Bibbles' own names.
-    static let actionAliases = ["tap": "click", "left_click": "click", "mouse_click": "click", "double_click": "click",
+    static let actionAliases = ["tap": "click", "left_click": "click", "mouse_click": "click", "doubleclick": "double_click",
+                                "dblclick": "double_click",
                                 "type_text": "type", "input": "type", "write": "type", "keypress": "key", "press_key": "key",
                                 "hotkey": "key", "shortcut": "key", "sleep": "wait", "pause": "wait", "open_url": "mac",
                                 "select": "choose", "check": "toggle", "scroll_down": "scroll", "scroll_up": "scroll",
@@ -290,7 +293,8 @@ enum ScreenPlanParser {
         guard actions.contains(name) else { return "“\(name.prefix(30))” isn't something Bibbles can do" }
         let needs: [String: String] = ["menu": "a menu path", "press": "a button title", "fill": "a field and a value",
                                        "toggle": "a target and on/off", "choose": "a target and an option",
-                                       "mac": "an allowed Mac action", "click": "an element number, or x and y from 0 to 1000", "type": "text",
+                                       "mac": "an allowed Mac action", "click": "an element number, or x and y from 0 to 1000", "double_click": "an element number, or x and y from 0 to 1000",
+                                       "type": "text",
                                        "key": "an allowed key (never quit or force)", "play": "notes", "wait": "a time",
                                        "drag": "start and end points", "scroll": "a direction",
                                        "switch_app": "an app name", "remember": "text", "attach": "a file name",
@@ -355,6 +359,11 @@ enum ScreenPlanParser {
             }
             guard let x = unit(object["x"]), let y = unit(object["y"]) else { return nil }
             return .click(x: x, y: y, label: text("label") ?? "", final: object["final"] as? Bool ?? false)
+        case "double_click":
+            let number = (object["element"] as? NSNumber)?.intValue
+            if let number, number > 0 { return .doubleClick(x: nil, y: nil, element: number, label: text("label") ?? "") }
+            guard let x = unit(object["x"]), let y = unit(object["y"]) else { return nil }
+            return .doubleClick(x: x, y: y, element: nil, label: text("label") ?? "")
         case "type":
             guard let typed = object["text"] as? String, !typed.isEmpty else { return nil }
             return .type(String(typed.prefix(2_000)))
@@ -1486,6 +1495,22 @@ enum ScreenAX {
         mouse(at: point, down: false)
     }
 
+    /// Two clicks the app reads as one double-click (click count 1, then 2).
+    static func doubleClick(at point: CGPoint) {
+        AgentCursor.shared.place(at: point)
+        AgentCursor.shared.pulse()
+        let source = CGEventSource(stateID: .combinedSessionState)
+        CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
+            .post(tap: .cghidEventTap)
+        for count in 1...2 {
+            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else { continue }
+                event.setIntegerValueField(.mouseEventClickState, value: Int64(count))
+                event.post(tap: .cghidEventTap)
+            }
+        }
+    }
+
     /// Scrolls whatever is under `point` (wheel events, like a mouse). Negative `dy` scrolls down.
     static func scroll(at point: CGPoint, dx: Int32, dy: Int32) {
         AgentCursor.shared.place(at: point)
@@ -1566,6 +1591,7 @@ enum ScreenAction {
     case save(folder: URL?, createFolder: Bool, name: String?)
     /// Screen point (top-left origin of the main display).
     case click(CGPoint, label: String, final: Bool)
+    case doubleClick(CGPoint, label: String, final: Bool)
     case type(String)
     case key(String, final: Bool)
     case play([ScreenPlayNote])
@@ -1602,7 +1628,7 @@ enum ScreenAction {
     /// Moves the real pointer (clicks, drags, scrolls, clicked notes), so it is put back afterwards.
     var usesMouse: Bool {
         switch self {
-        case .click, .drag, .scroll, .composeEmail: return true
+        case .click, .doubleClick, .drag, .scroll, .composeEmail: return true
         case .play(let notes): return notes.contains { !$0.points.isEmpty }
         default: return false
         }
@@ -1619,6 +1645,7 @@ enum ScreenAction {
         case .mac: return "mac"
         case .save: return "save"
         case .click: return "click"
+        case .doubleClick: return "doubleClick"
         case .type: return "type"
         case .key: return "key"
         case .play: return "play"
@@ -1845,6 +1872,27 @@ enum ScreenPlanValidator {
                     if looksAgainInstead() { continue }
                     drop(index, "there's no item \(number) on screen")
                 }
+            case .doubleClick(let x, let y, let number, let label):
+                var target: CGPoint?
+                var name = label
+                if let number {
+                    switch snapshot.item(number) {
+                    case .control(let item)?: target = item.center; name = item.title
+                    case .field(let field)?: target = snapshot.fieldCenters[field.id]; name = field.label
+                    case nil: break
+                    }
+                } else if let x, let y {
+                    target = point(x, y)
+                }
+                if let reason = blockedReason(name) { drop(index, reason); continue }
+                guard let target else {
+                    if number != nil, looksAgainInstead() { continue }
+                    drop(index, number != nil ? "there's no item \(number ?? 0) on screen" : "Bibbles needs Screen Recording to click on screen")
+                    continue
+                }
+                let asks = isFinal(name)
+                add(.doubleClick(target, label: name, final: asks), "Double-click " + (name.isEmpty ? "the spot shown" : "“\(name)”"),
+                    asksFirst: asks)
             case .type(let text):
                 // A missing detail leaves out only that part, not the whole message.
                 let (typed, missing) = typing(text, details: details)
@@ -2052,6 +2100,7 @@ enum ScreenAgentPrompt {
         - toggle {"target":"Remember me","on":false}; choose {"target":"Country","option":"India"}.
         - save {"folder":"Desktop","name":"holi final"}: in an open save/export sheet; folder and name only when the user said them.
         - click {"x":512,"y":300,"label":"Search box"}: a point on the SCREENSHOT, x and y from 0 to 1000 (top-left is 0,0). Use it for things the description doesn't list (web pages, canvases). Aim at the centre of the target.
+        - double_click {"element":7,"label":"Summer Sale"} or {"x":512,"y":300,"label":"Heading"}: a real double-click. In design apps (Canva, Figma, Google Slides, Keynote, Photoshop) a text box on the canvas must be double-clicked before typing: a newly added text box ("Add a heading") is only selected, not being edited. To replace its words: double_click it, key "cmd+a", then type.
         - type {"text":"Hello Sam, …"}: types text where the cursor is (click the field first, with a label naming it, e.g. "Message body"). You may write new text (an email, a message, a search) when the user asked for it. Don't sign it with the user's name unless they asked.
         - click {"element":7,"label":"Reply"}: the item numbered [7] in the description. Use this for anything listed with a number: it is exact. Use x/y only for things the description doesn't list.
         Always give click steps a "label" with the button's or field's visible name ("Reply", "Send", "Message body"): Bibbles presses it by that name when it can, which is exact.
@@ -2135,6 +2184,8 @@ struct ScreenRunResult {
     var filled = 0
     var verified = 0
     var unverified = 0
+    /// Typing couldn't start (no text box had the cursor): look again and plan from there.
+    var lookAgainNote: String?
     var firstError: String?
     /// For Undo: each filled field and what it held before.
     var previousValues: [(field: FormField, text: String)] = []
@@ -2280,6 +2331,7 @@ final class ScreenExecutor {
             let userPointer = action.usesMouse ? CGEvent(source: nil)?.location : nil
             let failure = await perform(action, in: app, result: &result)
             if let userPointer { CGWarpMouseCursorPosition(userPointer) }
+            if result.lookAgainNote != nil { break }
             if let problem = failure {
                 result.failed += 1
                 recordOutcome(actionKind: action.kindName, failed: true)
@@ -2472,6 +2524,18 @@ final class ScreenExecutor {
             await aim(at: point)
             ScreenAX.click(at: point)
             try? await Task.sleep(nanoseconds: 450_000_000)
+        case .doubleClick(let point, let label, let isFinalStep):
+            let underneath = ScreenAX.titleAt(point) ?? ""
+            if ScreenSafety.neverWord(in: underneath) != nil || ScreenSafety.neverWord(in: label) != nil {
+                return "“\(underneath.isEmpty ? label : underneath)” is never pressed by Bibbles"
+            }
+            if isFinalStep || ScreenSafety.blockedWord(in: underneath) != nil {
+                let name = [underneath, label].first { !$0.isEmpty } ?? "this"
+                guard await confirm("Double-click “\(name)”", app) else { return "you stopped before “\(name)”" }
+            }
+            await aim(at: point)
+            ScreenAX.doubleClick(at: point)
+            try? await Task.sleep(nanoseconds: 500_000_000)
         case .type(let text):
             // Only into a text box: never type into nothing (a box that didn't open).
             var target: AXUIElement?
@@ -2480,7 +2544,10 @@ final class ScreenExecutor {
                 if target != nil { break }
                 try? await Task.sleep(nanoseconds: 300_000_000)
             }
-            guard let target else { return "the cursor isn't in a text box, so nothing was typed (the box may not have opened)" }
+            guard let target else {
+                result.lookAgainNote = "nothing was typed: no text box had the cursor (on a canvas, double-click the text first)"
+                return nil
+            }
             lastTextElement = target
             do { try inserter.paste(text, restoringClipboard: true) } catch { return "couldn't type the text" }
             try? await Task.sleep(nanoseconds: 450_000_000)

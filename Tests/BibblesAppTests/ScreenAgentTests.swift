@@ -833,6 +833,36 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertTrue(send.lines.first?.asksFirst == true, "Send asks first even when the plan didn't say final")
     }
 
+    // MARK: - Double-click (editing text on a canvas)
+
+    func testParsesDoubleClickAsARealDoubleClick() {
+        let text = #"{"summary":"","steps":[{"action":"double_click","element":4,"label":"Heading"},{"action":"double_click","x":500,"y":250,"label":"Summer Sale"},{"action":"dblclick","x":100,"y":100},{"action":"double_click"}]}"#
+        let parsed = ScreenPlanParser.parse(text)
+        XCTAssertEqual(parsed.plan?.steps, [
+            .doubleClick(x: nil, y: nil, element: 4, label: "Heading"),
+            .doubleClick(x: 0.5, y: 0.25, element: nil, label: "Summer Sale"),
+            .doubleClick(x: 0.1, y: 0.1, element: nil, label: "")
+        ], "never turned into a single click")
+        XCTAssertEqual(parsed.dropped.map(\.index), [3])
+    }
+
+    @MainActor
+    func testDoubleClickPreviewIsCheckedLikeAClick() {
+        var screen = snapshot(controls: [ScreenControl(role: "AXButton", title: "Add a heading", isOn: nil, options: [], center: CGPoint(x: 40, y: 50)),
+                                         ScreenControl(role: "AXButton", title: "Delete Account", isOn: nil, options: [], center: .zero)])
+        screen.screenFrame = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+        let plan = ScreenPlan(summary: "", steps: [.doubleClick(x: nil, y: nil, element: 1, label: ""),
+                                                   .doubleClick(x: nil, y: nil, element: 2, label: ""),
+                                                   .doubleClick(x: 0.5, y: 0.5, element: nil, label: "Summer Sale")])
+        let preview = ScreenPlanValidator.preview(plan, snapshot: screen, request: "add a heading", details: me)
+        XCTAssertEqual(preview.lines.map(\.text), ["Double-click “Add a heading”", "Double-click “Summer Sale”"])
+        XCTAssertEqual(preview.dropped.map(\.index), [1], "never-pressed items are never double-clicked either")
+        guard case .doubleClick(let point, _, _)? = preview.actions.first else { return XCTFail("double-click") }
+        XCTAssertEqual(point, CGPoint(x: 40, y: 50))
+        XCTAssertTrue(ScreenAction.doubleClick(.zero, label: "", final: false).usesMouse)
+        XCTAssertEqual(ScreenAction.doubleClick(.zero, label: "", final: false).kindName, "doubleClick")
+    }
+
     // MARK: - Shorter history for long tasks
 
     func testLongHistoryIsShortenedButFactsAreKept() {
