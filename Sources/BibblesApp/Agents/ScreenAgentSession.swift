@@ -19,6 +19,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
 
     static let maxRounds = 8
     static let maxDuration: TimeInterval = 10 * 60
+    /// Total steps across all rounds before the agent stops (borrowed from Hermes' iteration budget).
+    static let maxTotalSteps = 30
 
     let id = UUID()
     let request: AgentRequest
@@ -51,6 +53,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     private var finishedAt: Date?
     private var work: Task<Void, Never>?
     private var log = AgentLogEntry(route: "agent_screen")
+    /// Total steps done across all rounds (for the step budget cap).
+    private var totalStepsDone = 0
 
     /// A final action (Send, Buy…) waiting for the user's OK, in the user's words
     /// ("Press “Send” in Mail"). The robot shows a red 1; the card asks.
@@ -112,6 +116,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         history = []
         skipped = []
         result = ScreenRunResult()
+        totalStepsDone = 0
         startedAt = Date()
         log = AgentLogEntry(route: "agent_screen", layer: layer)
         planRound()
@@ -308,10 +313,16 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
             self.merge(roundResult)
             if let switched = roundResult.switchedApp { self.app = switched }
             self.history += lines.prefix(roundResult.done)
+            self.totalStepsDone += roundResult.done
             self.log.executeMilliseconds = (self.log.executeMilliseconds ?? 0) + Int(Date().timeIntervalSince(roundStarted) * 1000)
             let outOfTime = Date().timeIntervalSince(self.startedAt) > Self.maxDuration
-            if roundResult.stopped || roundResult.firstError != nil || self.planDone || self.round >= Self.maxRounds || outOfTime {
+            let outOfBudget = self.totalStepsDone >= Self.maxTotalSteps
+            if roundResult.stopped || roundResult.firstError != nil || self.planDone || self.round >= Self.maxRounds || outOfTime || outOfBudget {
                 if !self.planDone, self.round >= Self.maxRounds || outOfTime { self.result.stopped = true }
+                if outOfBudget, !self.planDone {
+                    self.result.stopped = true
+                    if self.result.firstError == nil { self.result.firstError = "reached the \(Self.maxTotalSteps)-step limit" }
+                }
                 self.finish()
             } else {
                 self.round += 1
@@ -325,6 +336,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         result.total += part.total
         result.failed += part.failed
         result.filled += part.filled
+        result.verified += part.verified
+        result.unverified += part.unverified
         result.stopped = result.stopped || part.stopped
         result.firstError = result.firstError ?? part.firstError
         result.previousValues += part.previousValues
@@ -360,6 +373,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         if !skipped.isEmpty {
             sentences.append("Skipped \(skipped.count) step\(skipped.count == 1 ? "" : "s"): \(skipped[0]).")
         }
+        if result.unverified > 0 { sentences.append("\(result.unverified) action\(result.unverified == 1 ? "" : "s") couldn't be verified.") }
         if let problem = result.firstError { sentences.append("Stopped: \(problem).") }
         else if result.stopped { sentences.append(strings.stopped(result.done, result.total)) }
         resultSummary = sentences.isEmpty ? strings.nothing : sentences.joined(separator: " ")

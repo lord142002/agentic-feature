@@ -709,5 +709,63 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertTrue(text.contains("button: Reply @ 250,750"))
         XCTAssertTrue(text.contains("button: Load more\n") || text.hasSuffix("button: Load more"), "off screen: no position")
     }
+
+    // MARK: - Verify result enum
+
+    func testVerifyResultCases() {
+        XCTAssertNotEqual(ScreenVerifyResult.confirmed, ScreenVerifyResult.suspectedNoop)
+        XCTAssertNotEqual(ScreenVerifyResult.confirmed, ScreenVerifyResult.unverifiable)
+        XCTAssertNotEqual(ScreenVerifyResult.suspectedNoop, ScreenVerifyResult.unverifiable)
+    }
+
+    // MARK: - ScreenAction kindName
+
+    func testActionKindNames() {
+        XCTAssertEqual(ScreenAction.press("OK").kindName, "press")
+        XCTAssertEqual(ScreenAction.menu(["File", "Save"]).kindName, "menu")
+        let f = FormField(id: 1, element: AXUIElementCreateApplication(getpid()), role: "AXTextField", label: "Name", value: "", hasCursor: false)
+        XCTAssertEqual(ScreenAction.fill(field: f, text: "hi").kindName, "fill")
+        XCTAssertEqual(ScreenAction.click(.zero, label: "x", final: false).kindName, "click")
+        XCTAssertEqual(ScreenAction.type("hello").kindName, "type")
+        XCTAssertEqual(ScreenAction.key("return", final: false).kindName, "key")
+        XCTAssertEqual(ScreenAction.wait(500).kindName, "wait")
+        XCTAssertEqual(ScreenAction.scroll(at: nil, dx: 0, dy: 1).kindName, "scroll")
+        XCTAssertEqual(ScreenAction.remember("note").kindName, "remember")
+    }
+
+    // MARK: - ScreenRunResult tracks verified/unverified
+
+    func testRunResultTracksVerification() {
+        var r = ScreenRunResult()
+        XCTAssertEqual(r.verified, 0)
+        XCTAssertEqual(r.unverified, 0)
+        r.verified += 3
+        r.unverified += 1
+        XCTAssertEqual(r.verified, 3)
+        XCTAssertEqual(r.unverified, 1)
+    }
+
+    // MARK: - Step budget cap
+
+    func testMaxTotalStepsIs30() {
+        XCTAssertEqual(ScreenAgentSession.maxTotalSteps, 30)
+    }
+
+    // MARK: - Stall guard threshold
+
+    func testStallThresholdIs3() {
+        XCTAssertEqual(ScreenExecutor.stallThreshold, 3)
+    }
+
+    // MARK: - Blocked keys
+
+    func testBlockedKeyCombosAreRejected() {
+        XCTAssertNil(ScreenKeys.parse("cmd+q"))
+        XCTAssertNil(ScreenKeys.parse("cmd+option+escape"))
+        XCTAssertNil(ScreenKeys.parse("cmd+shift+q"))
+        XCTAssertNil(ScreenKeys.parse("cmd+delete"))
+        XCTAssertNotNil(ScreenKeys.parse("cmd+s"))
+        XCTAssertNotNil(ScreenKeys.parse("return"))
+    }
 }
 #endif

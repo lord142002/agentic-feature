@@ -1565,6 +1565,32 @@ enum ScreenAction {
         default: return false
         }
     }
+
+    /// A short name for the stall guard (groups failures by action kind).
+    var kindName: String {
+        switch self {
+        case .menu: return "menu"
+        case .press: return "press"
+        case .fill: return "fill"
+        case .toggle: return "toggle"
+        case .choose: return "choose"
+        case .mac: return "mac"
+        case .save: return "save"
+        case .click: return "click"
+        case .type: return "type"
+        case .key: return "key"
+        case .play: return "play"
+        case .wait: return "wait"
+        case .drag: return "drag"
+        case .scroll: return "scroll"
+        case .switchApp: return "switchApp"
+        case .remember: return "remember"
+        case .attach: return "attach"
+        case .openFile: return "openFile"
+        case .composeEmail: return "composeEmail"
+        case .mailto: return "mailto"
+        }
+    }
 }
 
 struct ScreenPreview {
@@ -2003,12 +2029,24 @@ enum ScreenAgentPrompt {
 
 // MARK: - Execute
 
+/// The result of verifying an action via AX read-back.
+enum ScreenVerifyResult {
+    /// AX confirmed the action changed something.
+    case confirmed
+    /// AX suggests the action had no effect (the element is still the same).
+    case suspectedNoop
+    /// Can't tell (the element disappeared or the AX state is ambiguous).
+    case unverifiable
+}
+
 struct ScreenRunResult {
     var done = 0
     var total = 0
     var failed = 0
     var stopped = false
     var filled = 0
+    var verified = 0
+    var unverified = 0
     var firstError: String?
     /// For Undo: each filled field and what it held before.
     var previousValues: [(field: FormField, text: String)] = []
@@ -2030,6 +2068,9 @@ final class ScreenExecutor {
     private var documentFolder: URL?
     /// Where text was last typed (refocused after a confirmation question).
     private var lastTextElement: AXUIElement?
+    /// Consecutive failures on the same kind of action (stall guard).
+    private var consecutiveFailures = 0
+    private var lastFailedActionKind: String?
 
     /// Asks before a final action (Send, Buy, Delete…); tests replace it.
     /// The session sets this: the question waits in the agent card (the robot shows a red 1).
@@ -2048,19 +2089,90 @@ final class ScreenExecutor {
 
     static var isDarkMode: Bool { UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark" }
 
+    // MARK: Verify after action (borrowed from Hermes' verify ladder)
+
+    /// Reads back the AX state after a press/click to confirm the action landed.
+    private func verifyPress(_ title: String, in app: NSRunningApplication) async -> ScreenVerifyResult {
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        // A successful press usually changes focus, opens a new window, or the button disappears.
+        if let focused = ScreenAX.element(appElement, kAXFocusedUIElementAttribute) {
+            let focusedTitle = ScreenAX.title(focused)
+            let focusedRole = ScreenAX.string(focused, kAXRoleAttribute) ?? ""
+            // The button is still focused and enabled: the press may not have done anything.
+            if focusedTitle == title, focusedRole.contains("Button") {
+                if let enabled = ScreenAX.value(focused, kAXEnabledAttribute) as? Bool, enabled {
+                    return .suspectedNoop
+                }
+            }
+        }
+        return .confirmed
+    }
+
+    /// Reads back a text field to confirm a fill landed.
+    private func verifyFill(_ field: FormField, expected: String) -> ScreenVerifyResult {
+        let current = ScreenAX.string(field.element, kAXValueAttribute) ?? ""
+        if current.contains(expected.prefix(20)) { return .confirmed }
+        if current == field.value { return .suspectedNoop }
+        return .unverifiable
+    }
+
+    /// Reads back a toggle to confirm it changed.
+    private func verifyToggle(_ element: AXUIElement, expectedOn: Bool) -> ScreenVerifyResult {
+        if let val = ScreenAX.value(element, kAXValueAttribute) {
+            let isOn = "\(val)" == "1" || "\(val)".lowercased() == "true"
+            return isOn == expectedOn ? .confirmed : .suspectedNoop
+        }
+        return .unverifiable
+    }
+
+    // MARK: Stall guard (borrowed from Hermes' tool loop guardrails)
+
+    static let stallThreshold = 3
+
+    private func recordOutcome(actionKind: String, failed: Bool) {
+        if failed {
+            if actionKind == lastFailedActionKind {
+                consecutiveFailures += 1
+            } else {
+                lastFailedActionKind = actionKind
+                consecutiveFailures = 1
+            }
+        } else {
+            consecutiveFailures = 0
+            lastFailedActionKind = nil
+        }
+    }
+
+    /// True when the same kind of action has failed too many times in a row.
+    var isStalled: Bool { consecutiveFailures >= Self.stallThreshold }
+
     func run(_ actions: [ScreenAction], in app: NSRunningApplication,
              progress: (Int, Int) -> Void) async -> ScreenRunResult {
         var result = ScreenRunResult(total: actions.count)
+        consecutiveFailures = 0
+        lastFailedActionKind = nil
         documentFolder = ScreenAX.documentURL(of: app)?.deletingLastPathComponent()
         app.activate(options: [.activateIgnoringOtherApps])
         try? await Task.sleep(nanoseconds: 350_000_000)
         for action in actions {
             if stopRequested || Task.isCancelled { result.stopped = true; break }
+            // Stall guard: too many failures in a row on the same kind of action.
+            if isStalled {
+                result.stopped = true
+                if result.firstError == nil {
+                    result.firstError = "stopped: \(lastFailedActionKind ?? "action") failed \(Self.stallThreshold) times in a row"
+                }
+                break
+            }
             if let problem = await perform(action, in: app, result: &result) {
                 result.failed += 1
+                recordOutcome(actionKind: action.kindName, failed: true)
                 if result.firstError == nil { result.firstError = problem }
                 // Later steps depend on this one: stop rather than act on the wrong screen.
                 if case .fill = action {} else { result.stopped = true; result.done += 1; progress(result.done, actions.count); break }
+            } else {
+                recordOutcome(actionKind: action.kindName, failed: false)
             }
             result.done += 1
             progress(result.done, actions.count)
@@ -2077,15 +2189,21 @@ final class ScreenExecutor {
             guard ScreenAX.press(item) else { return "couldn't choose \(path.last ?? "")" }
             try? await Task.sleep(nanoseconds: 700_000_000)
         case .press(let title):
-            guard let found = await ScreenAX.findControl(title, in: app) else { return "couldn't find “\(title)”" }
+            guard let found = await ScreenAX.findControl(title, in: app) else { return “couldn't find “\(title)”” }
             // The screen may have changed since the preview.
-            if let problem = await askFirstIfFinal(found.control.title, verb: "Press", in: app) { return problem }
+            if let problem = await askFirstIfFinal(found.control.title, verb: “Press”, in: app) { return problem }
             // Pressing Save in a sheet: remember the name to find the file afterwards.
             let savingName = ScreenSafety.saveButtons.contains(ScreenAX.normalized(found.control.title))
                 ? ScreenAX.saveSheet(in: app).flatMap { ScreenAX.nameField(in: $0) }.flatMap { ScreenAX.string($0, kAXValueAttribute) } : nil
             let pressedAt = Date()
-            guard ScreenAX.press(found.element) else { return "couldn't press “\(title)”" }
+            guard ScreenAX.press(found.element) else { return “couldn't press “\(title)”” }
             try? await Task.sleep(nanoseconds: 500_000_000)
+            // Verify the press landed.
+            switch await verifyPress(title, in: app) {
+            case .confirmed: result.verified += 1
+            case .suspectedNoop: result.unverified += 1
+            case .unverifiable: break
+            }
             if let savingName {
                 if let problem = await replaceProblem(in: app) { return problem }
                 result.savedFile = await locateSaved(savingName, in: nil, since: pressedAt)
@@ -2115,11 +2233,18 @@ final class ScreenExecutor {
             if let problem = await replaceProblem(in: app) { return problem }
             result.savedFile = await locateSaved(finalName, in: folder, since: pressedAt)
         case .toggle(let title, let on):
-            guard let found = await ScreenAX.findControl(title, roles: ["AXCheckBox", "AXRadioButton"], in: app, timeout: 2) else {
-                return "couldn't find “\(title)”"
+            guard let found = await ScreenAX.findControl(title, roles: [“AXCheckBox”, “AXRadioButton”], in: app, timeout: 2) else {
+                return “couldn't find “\(title)””
             }
-            if let problem = await askFirstIfFinal(found.control.title, verb: "Switch", in: app) { return problem }
-            if found.control.isOn != on, !ScreenAX.press(found.element) { return "couldn't switch “\(title)”" }
+            if let problem = await askFirstIfFinal(found.control.title, verb: “Switch”, in: app) { return problem }
+            if found.control.isOn != on, !ScreenAX.press(found.element) { return “couldn't switch “\(title)”” }
+            // Verify the toggle changed.
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            switch verifyToggle(found.element, expectedOn: on) {
+            case .confirmed: result.verified += 1
+            case .suspectedNoop: result.unverified += 1
+            case .unverifiable: break
+            }
         case .choose(let title, let option):
             guard let found = await ScreenAX.findControl(title, roles: ["AXPopUpButton", "AXMenuButton"], in: app, timeout: 2),
                   ScreenAX.press(found.element) else { return "couldn't open “\(title)”" }
@@ -2156,9 +2281,15 @@ final class ScreenExecutor {
         case .fill(let field, let text):
             let filled = await FormFieldFiller(inserter: inserter).fill([FormFillAction(field: field.id, text: text, replace: true)],
                                                                          fields: [field])
-            guard filled == 1 else { return "couldn't type into “\(field.label)”" }
+            guard filled == 1 else { return “couldn't type into “\(field.label)”” }
             result.previousValues.append((field, field.value))
             result.filled += 1
+            // Verify the fill landed.
+            switch verifyFill(field, expected: text) {
+            case .confirmed: result.verified += 1
+            case .suspectedNoop: result.unverified += 1
+            case .unverifiable: break
+            }
         case .click(let point, let label, let isFinalStep):
             // By name first: a real "Reply" button or "Message body" box is exact.
             if !label.isEmpty,
@@ -2174,11 +2305,18 @@ final class ScreenExecutor {
                 if ScreenAX.textRoles.contains(found.control.role) {
                     AXUIElementSetAttributeValue(found.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                     if let middle = ScreenAX.center(of: found.element) { ScreenAX.click(at: middle) }
+                    result.verified += 1
                 } else if !ScreenAX.press(found.element) {
-                    guard let middle = ScreenAX.center(of: found.element) else { return "couldn't press “\(name)”" }
+                    guard let middle = ScreenAX.center(of: found.element) else { return “couldn't press “\(name)”” }
                     ScreenAX.click(at: middle)
                 }
                 try? await Task.sleep(nanoseconds: 600_000_000)
+                // Verify the click landed.
+                switch await verifyPress(name, in: app) {
+                case .confirmed: result.verified += 1
+                case .suspectedNoop: result.unverified += 1
+                case .unverifiable: break
+                }
                 return nil
             }
             // Otherwise the point on the screenshot. Whatever is really under it decides, not only the plan's label.
