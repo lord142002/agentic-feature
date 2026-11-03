@@ -134,6 +134,8 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     /// The agent task on screen, for "stop" / "continue" said by voice.
     private weak var activeScreenSession: ScreenAgentSession?
     private weak var activeFilesSession: FilesAgentSession?
+    /// The robot's mic is listening: the next thing said is an agent task (no router).
+    private var robotVoiceStarted: Date?
     #endif
     /// The "Welcome to Bibbles" guide (first launch, the notch's info button, Help).
     private lazy var welcomeWindow: WelcomeWindowController = WelcomeWindowController(
@@ -376,6 +378,14 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         }
         // A spoken answer's card waits for its voice (see showInSyncWithVoice).
         voiceReply.onSpeechStarted = { [weak self] in self?.releaseHeldAnswer() }
+        #if BIBBLES_DEVELOPER
+        // The agent robot is the agent's home: click it to give a task.
+        AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        AgentRobotController.shared.onHide = { [weak self] in self?.agentPanel.hideCard() }
+        agentPanel.entry.onTask = { [weak self] task in self?.startAgentFromRobot(task) }
+        agentPanel.entry.onToggleVoice = { [weak self] in self?.toggleRobotVoice() }
+        if AgentSettings.screenEnabled || AgentSettings.filesEnabled { AgentRobotController.shared.showIdle() }
+        #endif
         chatStore.onAssistantReply = { [weak self] response, sources in
             guard let self else { return }
             let display = sources.isEmpty ? response : response + "\n\nSources:\n" + sources.map {
@@ -548,6 +558,10 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             Diagnostics.log("stt", ["event": "app_error", "turnActive": self?.speechTurnIsActive ?? false])
             guard let self, self.speechTurnIsActive || self.selfTestRunning else { return }
             self.speechTurnIsActive = false
+            #if BIBBLES_DEVELOPER
+            self.robotVoiceStarted = nil
+            self.agentPanel.entry.listening = false
+            #endif
             if self.activeSpeechMode == .command, self.submitFocusedQuestion(self.latestPartialTranscript) {
                 self.voiceMeter.end()
                 return
@@ -653,6 +667,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         addItem(to: menu, "Show Last Answer", #selector(showLastAnswer)).isEnabled = interaction.lastAnswer != nil
         addItem(to: menu, "Copy Last Answer", #selector(copyLastAnswer)).isEnabled = interaction.lastAnswer != nil
         #if BIBBLES_DEVELOPER
+        if AgentSettings.screenEnabled || AgentSettings.filesEnabled {
+            addItem(to: menu, "Show Agent Robot", #selector(showAgentRobot))
+        }
         if AgentUndoRegistry.shared.latest != nil {
             addItem(to: menu, "Undo Last Agent Task", #selector(undoLastAgentTask))
         }
@@ -934,6 +951,15 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     private func dispatch(_ intent: BibblesIntent, transcript: String) {
         #if BIBBLES_DEVELOPER
         if intent != .dictate, handleAgentVoiceCommand(transcript) { return }
+        // Said into the robot's mic: an agent task, no router.
+        if intent != .dictate, let started = robotVoiceStarted {
+            robotVoiceStarted = nil
+            agentPanel.entry.listening = false
+            if Date().timeIntervalSince(started) < 180 {
+                startAgentFromRobot(transcript)
+                return
+            }
+        }
         // A new request: deep-task effort starts at medium until the router says otherwise.
         DeepEffort.current = .medium
         #endif
@@ -2550,6 +2576,38 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         interaction.transition(to: .transcript(summary, isFinal: true))
         overlay.showNearCursor()
         scheduleDismissal(afterNanoseconds: 6_000_000_000)
+    }
+
+    /// A task typed or said in the robot's card: always an agent task (no router).
+    /// Organising files goes to the Files agent; everything else to the Screen agent.
+    private func startAgentFromRobot(_ task: String) {
+        let text = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if AgentSettings.filesEnabled, FilesAgentDetector.isRequest(text) || !AgentSettings.screenEnabled {
+            startFilesAgent(text, layer: "robot")
+        } else if AgentSettings.screenEnabled {
+            startScreenAgent(text, layer: "robot")
+        } else {
+            interaction.transition(to: .failed("Turn on AI Agents in Settings → Developer to give the robot tasks."))
+            interaction.setActions()
+            overlay.showNearCursor()
+        }
+    }
+
+    /// The robot's mic: tap to listen, tap again to start the task.
+    private func toggleRobotVoice() {
+        if agentPanel.entry.listening {
+            handle(.pushToTalkEnded)
+        } else {
+            robotVoiceStarted = Date()
+            agentPanel.entry.listening = true
+            handle(.pushToTalkBegan)
+        }
+    }
+
+    @objc private func showAgentRobot() {
+        AgentRobotController.shared.showIdle()
+        agentPanel.present()
     }
 
     @objc private func undoLastAgentTask() {

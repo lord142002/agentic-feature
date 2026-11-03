@@ -116,6 +116,15 @@ final class AgentRobotController {
         if let look = currentLook?() { apply(look) }
     }
 
+    /// No task yet: the robot rests in the corner, ready for one (click it).
+    func showIdle() {
+        userHidden = false
+        errorSeen = false
+        watch = nil
+        currentLook = { .resting }
+        apply(.resting)
+    }
+
     /// Right-click → "Hide robot".
     func hideByUser() {
         userHidden = true

@@ -16,6 +16,8 @@ final class AgentPanelController {
     private(set) var screenSession: ScreenAgentSession?
     /// The card's height right now (it changes with what the agent shows).
     private var cardHeight: CGFloat = 200
+    /// The task box: what to do with a typed or spoken task, and whether the mic is listening.
+    let entry = AgentTaskEntry()
 
     init() {
         panel = DraggableCardPanel(contentRect: NSRect(origin: .zero, size: NSSize(width: Self.width, height: 200)),
@@ -29,6 +31,7 @@ final class AgentPanelController {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isMovable = true
+        (panel as? DraggableCardPanel)?.allowsKeyboard = true
     }
 
     var isVisible: Bool { panel.isVisible }
@@ -38,14 +41,14 @@ final class AgentPanelController {
         if let previous = self.session, previous !== session, previous.phase != .done { previous.cancel() }
         self.session = session
         screenSession = nil
-        setContent(AgentCardView(session: session, onClose: { [weak self] in self?.close() }))
+        setContent(AgentCardView(session: session, entry: entry, onClose: { [weak self] in self?.close() }))
     }
 
     /// A new Screen agent task: the card is ready, but opens only from the robot.
     func attach(_ session: ScreenAgentSession) {
         screenSession = session
         self.session = nil
-        setContent(ScreenAgentCardView(session: session, onClose: { [weak self] in self?.close() }))
+        setContent(ScreenAgentCardView(session: session, entry: entry, onClose: { [weak self] in self?.close() }))
     }
 
     /// Opens the card now (task history, Undo).
@@ -60,9 +63,13 @@ final class AgentPanelController {
     }
 
     func present() {
-        guard session != nil || screenSession != nil else { return }
+        if session == nil, screenSession == nil {
+            setContent(AgentIdleCardView(entry: entry, onClose: { [weak self] in self?.close() }))
+        }
         place()
-        panel.orderFrontRegardless()
+        // Keyboard for the task box, without bringing Bibbles to the front: the
+        // user's app stays the one the Screen agent works in.
+        panel.makeKeyAndOrderFront(nil)
     }
 
     /// Close: before Start it cancels (a question waiting for an OK is answered no);
@@ -174,6 +181,87 @@ private struct AgentCardChrome<Content: View>: View {
     }
 }
 
+/// What the task box does: start a task from typed or spoken words.
+@MainActor
+final class AgentTaskEntry: ObservableObject {
+    /// The mic is listening for a spoken task.
+    @Published var listening = false
+    var onTask: (String) -> Void = { _ in }
+    var onToggleVoice: () -> Void = {}
+}
+
+/// "What should I do?": type a task and press Return, or tap the mic and say it.
+private struct AgentTaskBox: View {
+    @ObservedObject var entry: AgentTaskEntry
+    let prompt: String
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(prompt)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                TextField("e.g. Export this to PDF on my Desktop", text: $text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13.5))
+                    .focused($focused)
+                    .onSubmit(submit)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(0.06)))
+                    .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.12), lineWidth: 1))
+                Button(action: entry.onToggleVoice) {
+                    Image(systemName: entry.listening ? "stop.circle.fill" : "mic.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(entry.listening ? Color.red : BibblesStyle.accentDeep)
+                }
+                .buttonStyle(.borderless)
+                .help(entry.listening ? "Stop listening and start the task" : "Say the task")
+                .accessibilityLabel(entry.listening ? "Stop listening" : "Say the task")
+                Button(action: submit) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 22))
+                        .foregroundStyle(trimmed.isEmpty ? Color.secondary : BibblesStyle.accentSecondary)
+                }
+                .buttonStyle(.borderless)
+                .disabled(trimmed.isEmpty)
+                .help("Start the task")
+                .accessibilityLabel("Start the task")
+            }
+            if entry.listening {
+                Text("Listening… tap the red button when you're done.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { focused = true }
+    }
+
+    private func submit() {
+        let task = trimmed
+        guard !task.isEmpty else { return }
+        text = ""
+        entry.onTask(task)
+    }
+}
+
+/// The robot clicked with no task yet: just the task box.
+private struct AgentIdleCardView: View {
+    @ObservedObject var entry: AgentTaskEntry
+    let onClose: () -> Void
+
+    var body: some View {
+        AgentCardChrome(chip: LocalMode.isOn ? "Agent · LOCAL MODE" : "Agent", chipTint: nil,
+                        closeLabel: "Close", onClose: onClose) {
+            AgentTaskBox(entry: entry, prompt: "What should I do? I can click, type, fill, export and organise files for you.")
+        }
+    }
+}
+
 /// A button like Bibbles' cards: the main action in the accent colour, others quiet.
 private func agentCardButton(_ title: String, prominent: Bool, action: @escaping () -> Void) -> some View {
     Button(action: action) {
@@ -191,6 +279,7 @@ private func agentCardButton(_ title: String, prominent: Bool, action: @escaping
 
 private struct AgentCardView: View {
     @ObservedObject var session: FilesAgentSession
+    let entry: AgentTaskEntry
     let onClose: () -> Void
     @State private var showList = false
 
@@ -200,6 +289,17 @@ private struct AgentCardView: View {
         AgentCardChrome(chip: LocalMode.isOn ? strings.label + " · LOCAL MODE" : strings.label, chipTint: nil,
                         closeLabel: strings.close, onClose: onClose) {
             content
+            if isFinished {
+                Divider()
+                AgentTaskBox(entry: entry, prompt: "Next task")
+            }
+        }
+    }
+
+    private var isFinished: Bool {
+        switch session.phase {
+        case .done, .undone, .failed: return true
+        default: return false
         }
     }
 
@@ -319,6 +419,7 @@ private struct AgentCardView: View {
 /// Preview of the screen steps with Start / Cancel, progress with Stop, then Done · Undo.
 private struct ScreenAgentCardView: View {
     @ObservedObject var session: ScreenAgentSession
+    let entry: AgentTaskEntry
     let onClose: () -> Void
 
     private var strings: FilesAgentStrings { session.strings }
@@ -331,6 +432,17 @@ private struct ScreenAgentCardView: View {
             } else {
                 content
             }
+            if isFinished {
+                Divider()
+                AgentTaskBox(entry: entry, prompt: "Next task")
+            }
+        }
+    }
+
+    private var isFinished: Bool {
+        switch session.phase {
+        case .done, .undone, .failed: return true
+        default: return false
         }
     }
 
