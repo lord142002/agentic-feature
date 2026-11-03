@@ -2147,14 +2147,30 @@ final class ScreenExecutor {
     /// True when the same kind of action has failed too many times in a row.
     var isStalled: Bool { consecutiveFailures >= Self.stallThreshold }
 
+    /// Typing pastes into the app in front. While Bibbles is active (its card was
+    /// just clicked) the paste would go to Bibbles, so hand the front to the app first.
+    private func bringToFront(_ app: NSRunningApplication) async -> Bool {
+        for _ in 0..<10 {
+            let front = NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier
+            if front, !FocusedTextInserter.bibblesIsFrontmost { return true }
+            if NSApp.isActive {
+                if #available(macOS 14.0, *) { NSApp.yieldActivation(to: app) }
+                NSApp.deactivate()
+            }
+            app.activate(options: [.activateIgnoringOtherApps])
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        return false
+    }
+
     func run(_ actions: [ScreenAction], in app: NSRunningApplication,
              progress: (Int, Int) -> Void) async -> ScreenRunResult {
         var result = ScreenRunResult(total: actions.count)
         consecutiveFailures = 0
         lastFailedActionKind = nil
         documentFolder = ScreenAX.documentURL(of: app)?.deletingLastPathComponent()
-        app.activate(options: [.activateIgnoringOtherApps])
-        try? await Task.sleep(nanoseconds: 350_000_000)
+        _ = await bringToFront(app)
+        try? await Task.sleep(nanoseconds: 200_000_000)
         for action in actions {
             if stopRequested || Task.isCancelled { result.stopped = true; break }
             // Stall guard: too many failures in a row on the same kind of action.
@@ -2182,6 +2198,12 @@ final class ScreenExecutor {
 
     /// nil when it worked, otherwise the problem in plain words.
     private func perform(_ action: ScreenAction, in app: NSRunningApplication, result: inout ScreenRunResult) async -> String? {
+        switch action {
+        case .fill, .type, .composeEmail, .save:
+            guard await bringToFront(app) else { return "couldn't bring \(app.localizedName ?? "the app") to the front to type" }
+        default:
+            break
+        }
         switch action {
         case .menu(let path):
             guard let item = ScreenAX.menuItem(path, in: app) else { return "couldn't find \(path.joined(separator: " ▸ "))" }
@@ -2521,8 +2543,8 @@ final class ScreenExecutor {
     /// Puts typed fields back as they were and dark mode as it was. Clicks
     /// and menu commands can't be undone.
     func undo(_ result: ScreenRunResult, in app: NSRunningApplication) async -> Int {
-        app.activate(options: [.activateIgnoringOtherApps])
-        try? await Task.sleep(nanoseconds: 300_000_000)
+        _ = await bringToFront(app)
+        try? await Task.sleep(nanoseconds: 200_000_000)
         var restored = 0
         for (field, previous) in result.previousValues.reversed() {
             if previous.isEmpty {
