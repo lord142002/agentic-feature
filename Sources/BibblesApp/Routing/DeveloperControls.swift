@@ -26,6 +26,8 @@ final class DeveloperControls: ObservableObject {
     @Published private(set) var filesAgent = AgentSettings.filesEnabled
     /// "AI Agents (Screen)", default OFF.
     @Published private(set) var screenAgent = AgentSettings.screenEnabled
+    /// Screen agent "Live mode", default OFF.
+    @Published private(set) var screenLive = AgentSettings.screenLive
     @Published private(set) var contactsLoading = false
     @Published private(set) var agentTestRunning = false
     @Published private(set) var agentTestProgress: (done: Int, total: Int)?
@@ -53,6 +55,7 @@ final class DeveloperControls: ObservableObject {
         localMode = LocalMode.isOn
         filesAgent = AgentSettings.filesEnabled
         screenAgent = AgentSettings.screenEnabled
+        screenLive = AgentSettings.screenLive
         models = Dictionary(uniqueKeysWithValues: ModelFeature.allCases.map { ($0, ModelCatalog.selected($0).id) })
         costCount = LocalCostLog.shared.entries.count
         costTotal = LocalCostLog.shared.totalCost
@@ -103,6 +106,12 @@ final class DeveloperControls: ObservableObject {
         AgentSettings.filesEnabled = on
         refresh()
         show(on ? "Files agent on: \"clean up my Downloads\" now shows a preview first" : "Files agent off: today's behaviour")
+    }
+
+    func setScreenLive(_ on: Bool) {
+        AgentSettings.screenLive = on
+        refresh()
+        show(on ? "Live mode on: the Screen agent does one step at a time and looks after each" : "Live mode off: plans several steps at once")
     }
 
     func setScreenAgent(_ on: Bool) {

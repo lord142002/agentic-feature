@@ -2055,6 +2055,10 @@ private struct DeveloperPage: View {
                           "Requests like \"Click Export and save it as a PDF\" or \"Fill in this sign-up form with my details\" act in the app you're using, after a preview and Start. It never presses Submit, Sign up, Send, Pay, Buy or Delete, and never fills passwords, cards or IDs. \"With my details\" is matched on this Mac with no AI. Other requests need Local mode.",
                           isOn: controls.screenAgent, set: { controls.setScreenAgent($0) })
                 RowDivider()
+                toggleRow("Screen agent: Live mode",
+                          "One step at a time: Bibbles looks at the screen, does one action, then looks again, so the AI sees each result and can fix a missed click. Slower and uses more AI calls per task. Still starts only after Start, asks before final actions, and stops after 30 steps or 3 failed tries in a row.",
+                          isOn: controls.screenLive, set: { controls.setScreenLive($0) })
+                RowDivider()
                 SettingRow(title: "Run Agent Plan Test Set",
                            detail: "Plans \(AgentPlanTestSet.cases.count) Files requests (EN, ES, DE, FR, PT, JA, Hindi/Hinglish) against a fake folder summary on every planner with a saved key. Planning only, no files touched. Copies valid JSON %, allowed actions %, correct plan %, average and slowest ms and cost per plan.") {
                     PillButton(title: controls.agentTestRunning ? "Running…" : "Run", prominent: !controls.agentTestRunning,

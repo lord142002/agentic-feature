@@ -1730,6 +1730,17 @@ struct ScreenPreview {
     var isEmpty: Bool { actions.isEmpty }
     var fills: Int { actions.filter { if case .fill = $0 { return true } else { return false } }.count }
 
+    /// Live mode after Start: only an email or an attachment waits for Continue
+    /// (final actions still ask right before they happen).
+    var needsLiveApproval: Bool {
+        actions.contains {
+            switch $0 {
+            case .composeEmail, .mailto, .attach: return true
+            default: return false
+            }
+        }
+    }
+
     /// Typing, filling or a final action: wait for the user's Start/Continue.
     var needsApproval: Bool {
         lines.contains(where: \.asksFirst) || actions.contains {
@@ -2187,6 +2198,17 @@ enum ScreenAgentPrompt {
     }
 
     static let recentHistory = 12
+
+    /// Added to the request in live mode.
+    static let liveNote = """
+
+    LIVE MODE: return exactly ONE step: the single next action. Bibbles does it, then sends you a new screenshot and asks again, so you see the result before choosing the next action. "done": true only when this step finishes the task, or when the task is already finished (then "steps": []). If "Already done" ends with "Failed: …", that step didn't work: look at the screen and try a different way (another item number, a menu, a key).
+    """
+
+    /// Live mode runs one step per look, whatever the planner sent.
+    static func firstStepOnly(_ plan: ScreenPlan) -> ScreenPlan {
+        ScreenPlan(summary: plan.summary, steps: Array(plan.steps.prefix(1)), done: plan.done && plan.steps.count <= 1)
+    }
 
     /// Long tasks: the latest steps in full, older ones as counts per kind, so
     /// the message stays short. Remembered facts are always kept word for word.

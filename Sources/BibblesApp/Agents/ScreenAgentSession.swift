@@ -63,6 +63,13 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     private var startBundleID: String?
     /// Times typing couldn't start and Bibbles looked again instead.
     private var lookAgainCount = 0
+    /// Live mode (one step per look), read when the task starts.
+    private var live = false
+    /// Live mode: failed or unusable steps in a row.
+    private var liveMisses = 0
+    /// Nothing happens on screen before the user's first Start.
+    private var startApproved = false
+    private var roundLimit: Int { live ? Self.maxTotalSteps : Self.maxRounds }
 
     /// A final action (Send, Buy…) waiting for the user's OK, in the user's words
     /// ("Press “Send” in Mail"). The robot shows a red 1; the card asks.
@@ -128,6 +135,9 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         firstPlan = nil
         usedMemory = false
         lookAgainCount = 0
+        live = AgentSettings.screenLive
+        liveMisses = 0
+        startApproved = false
         startBundleID = app?.bundleIdentifier
         startedAt = Date()
         log = AgentLogEntry(route: "agent_screen", layer: layer)
@@ -171,7 +181,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 var dropped: [AgentDroppedStep] = []
                 // The same request worked here before: reuse those steps if they all still fit this screen.
                 var remembered: ScreenPlan?
-                if isFirst, !ScreenAgentDetector.isDetailsFill(text),
+                if isFirst, !self.live, !ScreenAgentDetector.isDetailsFill(text),
                    let saved = ScreenPlanMemory.recall(app: app.bundleIdentifier, request: text) {
                     let check = ScreenPlanValidator.preview(saved, snapshot: snapshot, request: text, details: details)
                     if !check.isEmpty, check.dropped.isEmpty, !check.looksAgain { remembered = saved }
@@ -202,7 +212,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                     let started = Date()
                     let models = [ModelCatalog.selected(.screenAgent), ModelCatalog.selected(.agentBackup)]
                     let userMessage = ScreenAgentPrompt.user(request: text, snapshot: snapshot.describe(details: details),
-                                                             history: self.history)
+                                                             history: self.history) + (self.live ? ScreenAgentPrompt.liveNote : "")
                     func ask(_ message: String) async throws -> (AgentPlannerReply, ScreenParseResult) {
                         try await AgentPlanner.planned(
                             system: ScreenAgentPrompt.system(replyLanguage: ToolGate.replyLanguageRule),
@@ -224,8 +234,8 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                     }
                     try Task.checkCancellation()
                     guard let parsedPlan = parsed.plan else { throw AgentError.planFailed("invalid plan") }
-                    plan = parsedPlan
-                    if isFirst { self.firstPlan = parsedPlan }
+                    plan = self.live ? ScreenAgentPrompt.firstStepOnly(parsedPlan) : parsedPlan
+                    if isFirst { self.firstPlan = plan }
                     dropped = parsed.dropped
                     self.log.planMilliseconds = (self.log.planMilliseconds ?? 0) + Int(Date().timeIntervalSince(started) * 1000)
                     self.log.plannerModel = reply.model.id + (reply.usedBackup ? " (backup)" : "")
@@ -246,9 +256,12 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 self.planDone = plan.done && !lookAtNewApp && !preview.looksAgain
                 if !plan.summary.isEmpty { self.planSummary = plan.summary }
                 self.preview = preview
-                if preview.isEmpty, !isFirst {
+                if self.live, preview.isEmpty, !plan.done,
+                   self.retryLive(preview.dropped.first?.reason ?? "the planned step couldn't be used") {
+                    return
+                } else if preview.isEmpty, !isFirst {
                     self.finish()
-                } else if isFirst || preview.needsApproval {
+                } else if !self.startApproved || (self.live ? preview.needsLiveApproval : preview.needsApproval) {
                     self.phase = .preview
                     if !preview.isEmpty { self.onWaiting?() }
                 } else {
@@ -321,6 +334,7 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
     /// Start / Continue: the only way anything happens on screen.
     func confirm() {
         guard phase == .preview, !preview.isEmpty, let app else { return }
+        startApproved = true
         let executor = self.executor ?? ScreenExecutor(inserter: inserter)
         executor.stepBudget = max(0, Self.maxTotalSteps - totalStepsDone)
         executor.confirm = { [weak self] action, app in
@@ -333,10 +347,17 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
         phase = .running(done: 0, total: actions.count)
         let roundStarted = Date()
         work = Task { [weak self] in
-            let roundResult = await executor.run(actions, in: app) { done, total in
+            var roundResult = await executor.run(actions, in: app) { done, total in
                 self?.phase = .running(done: done, total: total)
             }
             guard let self else { return }
+            // Live mode: a failed step is told to the planner, which tries another way.
+            var liveProblem: String?
+            if self.live, roundResult.failed > 0, !executor.stopRequested, let problem = roundResult.firstError {
+                liveProblem = problem
+                roundResult.firstError = nil
+                roundResult.stopped = false
+            }
             self.merge(roundResult)
             if let switched = roundResult.switchedApp { self.app = switched }
             self.history += lines.prefix(roundResult.done)
@@ -354,8 +375,14 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                     self.planDone = false
                 }
             }
-            if roundResult.stopped || roundResult.firstError != nil || self.result.firstError != nil || self.planDone || self.round >= Self.maxRounds || outOfTime || outOfBudget {
-                if !self.planDone, self.round >= Self.maxRounds || outOfTime { self.result.stopped = true }
+            if let liveProblem {
+                if self.retryLive(liveProblem) { return }
+                self.result.firstError = self.result.firstError ?? liveProblem
+            } else if self.live, roundResult.done > 0 {
+                self.liveMisses = 0
+            }
+            if roundResult.stopped || roundResult.firstError != nil || self.result.firstError != nil || self.planDone || self.round >= self.roundLimit || outOfTime || outOfBudget {
+                if !self.planDone, self.round >= self.roundLimit || outOfTime { self.result.stopped = true }
                 if outOfBudget, !self.planDone {
                     self.result.stopped = true
                     if self.result.firstError == nil { self.result.firstError = "reached the \(Self.maxTotalSteps)-step limit" }
@@ -366,6 +393,18 @@ final class ScreenAgentSession: ObservableObject, Identifiable {
                 self.planRound()
             }
         }
+    }
+
+    /// Live mode: tells the planner what failed and looks again (3 misses in a row end the
+    /// task). Returns false when it is time to stop instead.
+    private func retryLive(_ problem: String) -> Bool {
+        let outOfTime = Date().timeIntervalSince(startedAt) > Self.maxDuration
+        guard live, liveMisses < 2, round < roundLimit, !outOfTime, totalStepsDone < Self.maxTotalSteps else { return false }
+        liveMisses += 1
+        history.append("Failed: " + problem)
+        round += 1
+        planRound()
+        return true
     }
 
     private func merge(_ part: ScreenRunResult) {

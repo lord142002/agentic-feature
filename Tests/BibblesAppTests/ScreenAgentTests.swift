@@ -884,6 +884,29 @@ final class ScreenAgentTests: XCTestCase {
         XCTAssertEqual(label, "Add a heading")
     }
 
+    // MARK: - Live mode
+
+    func testLiveModeRunsOneStepPerLook() {
+        let plan = ScreenPlan(summary: "s", steps: [.press("Add a heading"), .type("Summer Sale")], done: true)
+        let one = ScreenAgentPrompt.firstStepOnly(plan)
+        XCTAssertEqual(one.steps, [.press("Add a heading")])
+        XCTAssertFalse(one.done, "the planner said done for both steps: after only the first, it isn't")
+        XCTAssertTrue(ScreenAgentPrompt.firstStepOnly(ScreenPlan(summary: "", steps: [.key("return", final: false)], done: true)).done)
+        XCTAssertEqual(ScreenAgentPrompt.firstStepOnly(ScreenPlan(summary: "", steps: [], done: true)).steps, [])
+        XCTAssertTrue(ScreenAgentPrompt.liveNote.contains("exactly ONE step"))
+    }
+
+    func testLiveModeWaitsOnlyForEmailsAndAttachments() {
+        let field = FormField(id: 1, element: AXUIElementCreateApplication(getpid()), role: "AXTextField", label: "Name", value: "", hasCursor: false)
+        var typing = ScreenPreview()
+        typing.actions = [.type("Summer Sale"), .fill(field: field, text: "Mo")]
+        XCTAssertTrue(typing.needsApproval)
+        XCTAssertFalse(typing.needsLiveApproval, "after Start, live steps run on (final actions still ask right before)")
+        var email = ScreenPreview()
+        email.actions = [.mailto(URL(string: "mailto:sam@example.com")!)]
+        XCTAssertTrue(email.needsLiveApproval)
+    }
+
     // MARK: - Shorter history for long tasks
 
     func testLongHistoryIsShortenedButFactsAreKept() {

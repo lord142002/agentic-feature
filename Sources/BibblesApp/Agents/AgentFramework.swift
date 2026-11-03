@@ -25,6 +25,14 @@ enum AgentSettings {
         get { screenTestOverride ?? UserDefaults.standard.bool(forKey: screenKey) }
         set { UserDefaults.standard.set(newValue, forKey: screenKey) }
     }
+
+    static let screenLiveKey = "bibbles.dev.agents.screen.live"
+
+    /// "Live mode": one step at a time, with a new screenshot after each. Default OFF.
+    static var screenLive: Bool {
+        get { UserDefaults.standard.bool(forKey: screenLiveKey) }
+        set { UserDefaults.standard.set(newValue, forKey: screenLiveKey) }
+    }
 }
 
 /// The spoken version of an agent's result: the first sentence or two, short.
