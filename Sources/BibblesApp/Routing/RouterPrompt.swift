@@ -101,12 +101,24 @@ enum RouterPrompt {
 
     static var system: String {
         #if BIBBLES_DEVELOPER
-        if AgentSettings.filesEnabled { return withFilesAgent }
-        #endif
+        let prompt = AgentSettings.filesEnabled ? withFilesAgent : base
+        let withAgents = AgentSettings.screenEnabled ? withScreenAgent(prompt) : prompt
+        return LocalMode.isOn ? withEffort(withAgents) : withAgents
+        #else
         return base
+        #endif
     }
 
     #if BIBBLES_DEVELOPER
+    /// Local mode: the router also says how hard a deep answer should think.
+    static func withEffort(_ prompt: String) -> String {
+        prompt.replacingOccurrences(of: #"Reply with JSON only: {"route":"<route>","confidence":<0.0-1.0>}"#,
+                                    with: #"Reply with JSON only: {"route":"<route>","confidence":<0.0-1.0>,"effort":"low|medium"}"#)
+            + "\nEffort: low when the answer is clearly simple (describe or explain what is on screen, a definition, a short fact, "
+            + "a summary); medium when it needs careful reasoning (multi-step maths or logic, debugging, comparisons, analysis, planning). "
+            + "When unsure, medium."
+    }
+
     /// Developer builds with "AI Agents (Files)" on: organising MANY files is
     /// its own route; single-file actions stay `file_action`.
     static let withFilesAgent = base
@@ -117,5 +129,25 @@ enum RouterPrompt {
                               with: #""tidy up my downloads folder into folders by type" -> {"route":"agent_files","confidence":0.92}"# + "\n"
                                 + #""Ordne alle Bildschirmfotos auf meinem Schreibtisch nach Monat" -> {"route":"agent_files","confidence":0.9}"# + "\n"
                                 + #""desktop pe jitne bhi purane installers hain unhe trash mein daal do" -> {"route":"agent_files","confidence":0.88}"#)
+
+    /// Developer builds with "AI Agents (Screen)" on: doing things in the app on screen.
+    static func withScreenAgent(_ prompt: String) -> String {
+        prompt
+            .replacingOccurrences(of: "form_fill: fill in a form that is on screen (sign-up, checkout, application, contact form).",
+                                  with: "form_fill: fill in a form that is on screen (sign-up, checkout, application, contact form) with text the user dictates now.\n"
+                                    + "agent_screen: DO something on screen for the user, in any app or website: click or press buttons and menu items, export or save as, switch options, fill a form with the user's SAVED details (\"my details\"), write and send an email in Mail or a message in Messages, use a website (search, navigate, scroll, fill it in), work across two apps (\"take the total from this PDF and email it to Sam\"), attach a file from the Mac to a mail (\"attach my latest resume from Downloads\"), open a file and do something with it, or play music on a piano or instrument shown on screen. A command to do it now (\"export this to PDF\", \"click Save\") is agent_screen even when it says \"this\"; asking where something is or how to do it stays screen; Mac-wide dark mode, volume and brightness stay command.")
+            .replacingOccurrences(of: #""fill this out with my usual details" -> {"route":"form_fill","confidence":0.9}"#,
+                                  with: #""fill this out with my usual details" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
+                                    + #""hit Export and save this as a PDF" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
+                                    + #""Rellena este formulario con mis datos guardados" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
+                                    + #""untick 'send me newsletters' on this page" -> {"route":"agent_screen","confidence":0.88}"# + "\n"
+                                    + #""turn this picture into a PDF file" -> {"route":"agent_screen","confidence":0.88}"# + "\n"
+                                    + #""on this piano site make up a happy tune and play it" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
+                                    + #""reply to this mail saying I'll join at 5 and send it" -> {"route":"agent_screen","confidence":0.88}"# + "\n"
+                                    + #""take the total from this invoice and email it to Soham" -> {"route":"agent_screen","confidence":0.88}"# + "\n"
+                                    + #""attach my latest resume from Downloads to this mail" -> {"route":"agent_screen","confidence":0.9}"# + "\n"
+                                    + #""scroll down and click Load more" -> {"route":"agent_screen","confidence":0.88}"# + "\n"
+                                    + #""how do I export this as a PDF" -> {"route":"screen","confidence":0.88}"#)
+    }
     #endif
 }

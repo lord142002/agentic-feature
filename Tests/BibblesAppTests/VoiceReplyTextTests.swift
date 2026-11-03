@@ -42,6 +42,12 @@ final class VoiceReplyTextTests: XCTestCase {
         // Numbers like 1,000 are never split.
         let numbers = VoiceReplyText.readyChunks(in: "Sigma includes 1,000 asks each month for everyday work and more", final: false, quickStart: true)
         XCTAssertTrue(numbers.0.isEmpty)
+        // No pause near the start: the first few words, so the voice starts sooner.
+        let plain = "Bibbles opens a new email in your mail app with the recipient subject and message already filled in for you"
+        let words = VoiceReplyText.readyChunks(in: plain, final: true, quickStart: true).0
+        XCTAssertLessThanOrEqual(words.first?.count ?? 99, 45)
+        XCTAssertGreaterThanOrEqual(words.first?.split(separator: " ").count ?? 0, 4)
+        XCTAssertEqual(words.joined(separator: " "), VoiceReplyText.spoken(plain))
         // Without quickStart, chunks stay whole sentences.
         XCTAssertEqual(VoiceReplyText.readyChunks(in: text, final: true).0.count, 1)
     }

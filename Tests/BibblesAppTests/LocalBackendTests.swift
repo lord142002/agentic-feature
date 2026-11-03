@@ -370,6 +370,32 @@ final class LocalBackendTests: XCTestCase {
         XCTAssertEqual((converted["messages"] as? [[String: Any]])?.first?["role"] as? String, "system")
     }
 
+    func testDeepTasksThinkAtMediumEffort() throws {
+        XCTAssertEqual(LocalBackend.deepEffort, "medium")
+        let body = LocalBackend.withDeepEffort(LocalBackend.anthropicBody(
+            model: "claude-sonnet-5-5", messages: [["role": "user", "content": "hi"]], maxTokens: 100, stream: false, search: false))
+        XCTAssertEqual((body["output_config"] as? [String: Any])?["effort"] as? String, "medium")
+        XCTAssertNil(body["thinking"], "adaptive thinking stays on (the model default)")
+        let request = try LocalBackend.openRouterChatRequest(model: "openai/gpt-6.1-sol", messages: [["role": "user", "content": "hi"]],
+                                                             maxTokens: 100, stream: false, search: false, key: "k", effort: "medium")
+        let sent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
+        XCTAssertEqual((sent["reasoning"] as? [String: Any])?["effort"] as? String, "medium")
+        // Light requests carry no effort setting.
+        let light = try LocalBackend.openRouterChatRequest(model: "deepseek/deepseek-v4.1-flash", messages: [["role": "user", "content": "hi"]],
+                                                           maxTokens: 100, stream: false, search: false, key: "k")
+        let lightSent = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(light.httpBody)) as? [String: Any])
+        XCTAssertNil(lightSent["reasoning"])
+    }
+
+    func testHaikuRouterCostCountsCachedTokens() {
+        let usage: [String: Any] = ["input_tokens": 100, "cache_read_input_tokens": 3_000, "cache_creation_input_tokens": 0,
+                                    "output_tokens": 12]
+        XCTAssertEqual(LocalCostLog.anthropicRouterTokens(usage).input, 3_100)
+        // (100 + 0.1 × 3,000) × $1 + 12 × $5, per million tokens.
+        XCTAssertEqual(LocalCostLog.anthropicRouterCost(usage, model: "claude-haiku-4-5-20251001") ?? 0, 0.00046, accuracy: 0.0000001)
+        XCTAssertNil(LocalCostLog.anthropicRouterCost([:], model: "claude-haiku-4-5-20251001"))
+    }
+
     // MARK: Usage cache and badge
 
     func testUsageCacheKeepsOnlyUsageNumbers() throws {

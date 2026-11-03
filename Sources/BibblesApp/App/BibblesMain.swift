@@ -57,6 +57,11 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             Diagnostics.log("speak_flag", ["to": shouldSpeakNextAnswer, "by": callers.joined(separator: "<")])
         }
     }
+    /// An answer card waiting for its voice to start, and which speech it waits for.
+    private var heldAnswer: (show: () -> Void, voice: UUID)?
+    private var heldAnswerTimeout: Task<Void, Never>?
+    /// The speech whose wait already timed out: the rest of that answer shows at once.
+    private var stoppedWaitingFor: UUID?
     private var voiceRepliesEnabled: Bool {
         get { (UserDefaults.standard.object(forKey: "bibbles.voiceRepliesEnabled") as? Bool) ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "bibbles.voiceRepliesEnabled") }
@@ -104,6 +109,7 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             #if BIBBLES_DEVELOPER
             // A Files agent run that can still be undone: show its Done · Undo card.
             if let session = AgentUndoRegistry.shared.session(forAnswer: item.answer) {
+                AgentRobotController.shared.follow(session)
                 self.agentPanel.show(session)
                 return
             }
@@ -125,6 +131,11 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     )
     #if BIBBLES_DEVELOPER
     private lazy var agentPanel = AgentPanelController()
+    /// The agent task on screen, for "stop" / "continue" said by voice.
+    private weak var activeScreenSession: ScreenAgentSession?
+    private weak var activeFilesSession: FilesAgentSession?
+    /// The robot's mic is listening: the next thing said is an agent task (no router).
+    private var robotVoiceStarted: Date?
     #endif
     /// The "Welcome to Bibbles" guide (first launch, the notch's info button, Help).
     private lazy var welcomeWindow: WelcomeWindowController = WelcomeWindowController(
@@ -365,6 +376,16 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         if notchHistoryEnabled {
             notchPill.show()
         }
+        // A spoken answer's card waits for its voice (see showInSyncWithVoice).
+        voiceReply.onSpeechStarted = { [weak self] in self?.releaseHeldAnswer() }
+        #if BIBBLES_DEVELOPER
+        // The agent robot is the agent's home: click it to give a task.
+        AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        AgentRobotController.shared.onHide = { [weak self] in self?.agentPanel.hideCard() }
+        agentPanel.entry.onTask = { [weak self] task in self?.startAgentFromRobot(task) }
+        agentPanel.entry.onToggleVoice = { [weak self] in self?.toggleRobotVoice() }
+        if AgentSettings.screenEnabled || AgentSettings.filesEnabled { AgentRobotController.shared.showIdle() }
+        #endif
         chatStore.onAssistantReply = { [weak self] response, sources in
             guard let self else { return }
             let display = sources.isEmpty ? response : response + "\n\nSources:\n" + sources.map {
@@ -402,18 +423,24 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
                 }
             }
             guard !self.chatPanel.isVisible else { return }
-            self.interaction.transition(to: .answer(display))
-            self.interaction.modelLabel = ClaudeAPI.answeredByLabel() ?? self.interaction.modelLabel
-            self.interaction.setActions()
-            self.overlay.showNearCursor()
+            self.showInSyncWithVoice { [weak self] in
+                guard let self else { return }
+                self.interaction.transition(to: .answer(display))
+                self.interaction.modelLabel = ClaudeAPI.answeredByLabel() ?? self.interaction.modelLabel
+                self.interaction.setActions()
+                self.overlay.showNearCursor()
+            }
         }
         chatStore.onAssistantUpdate = { [weak self] response in
             guard let self else { return }
             if self.shouldSpeakNextAnswer { self.voiceReply.accept(response, final: false) }
             guard !self.chatPanel.isVisible else { return }
-            self.interaction.transition(to: .answer(response))
-            self.interaction.setActions(cancel: true)
-            self.overlay.refreshVisibleContent()
+            self.showInSyncWithVoice { [weak self] in
+                guard let self else { return }
+                self.interaction.transition(to: .answer(response))
+                self.interaction.setActions(cancel: true)
+                self.overlay.refreshVisibleContent()
+            }
         }
         chatStore.onNeedsScreen = { [weak self] question in
             guard let self else { return }
@@ -531,6 +558,10 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             Diagnostics.log("stt", ["event": "app_error", "turnActive": self?.speechTurnIsActive ?? false])
             guard let self, self.speechTurnIsActive || self.selfTestRunning else { return }
             self.speechTurnIsActive = false
+            #if BIBBLES_DEVELOPER
+            self.robotVoiceStarted = nil
+            self.agentPanel.entry.listening = false
+            #endif
             if self.activeSpeechMode == .command, self.submitFocusedQuestion(self.latestPartialTranscript) {
                 self.voiceMeter.end()
                 return
@@ -636,6 +667,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         addItem(to: menu, "Show Last Answer", #selector(showLastAnswer)).isEnabled = interaction.lastAnswer != nil
         addItem(to: menu, "Copy Last Answer", #selector(copyLastAnswer)).isEnabled = interaction.lastAnswer != nil
         #if BIBBLES_DEVELOPER
+        if AgentSettings.screenEnabled || AgentSettings.filesEnabled {
+            addItem(to: menu, "Show Agent Robot", #selector(showAgentRobot))
+        }
         if AgentUndoRegistry.shared.latest != nil {
             addItem(to: menu, "Undo Last Agent Task", #selector(undoLastAgentTask))
         }
@@ -915,17 +949,21 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     /// on: then keywords decide first, and Claude Haiku labels only the
     /// requests they can't decide. The user's words are never changed.
     private func dispatch(_ intent: BibblesIntent, transcript: String) {
-        if intent != .dictate { stopWalkthrough() }
         #if BIBBLES_DEVELOPER
-        // "AI Agents (Files)" on: organising many files goes to the Files agent.
-        if intent != .dictate, AgentSettings.filesEnabled, FilesAgentDetector.isRequest(transcript) {
-            ToolGateLog.shared.recordRouting(
-                RoutingDecision(source: .keyword, override: nil, keywordStrength: .strong, reason: "files agent keywords"),
-                text: transcript, finalRoute: "agent_files", tier: "agent")
-            startFilesAgent(transcript, layer: "keyword")
-            return
+        if intent != .dictate, handleAgentVoiceCommand(transcript) { return }
+        // Said into the robot's mic: an agent task, no router.
+        if intent != .dictate, let started = robotVoiceStarted {
+            robotVoiceStarted = nil
+            agentPanel.entry.listening = false
+            if Date().timeIntervalSince(started) < 180 {
+                startAgentFromRobot(transcript)
+                return
+            }
         }
+        // A new request: deep-task effort starts at medium until the router says otherwise.
+        DeepEffort.current = .medium
         #endif
+        if intent != .dictate { stopWalkthrough() }
         var intent = intent
         var hereWrite = false
         // Always on: "…write a mail to my HR here" is not a screen question.
@@ -968,6 +1006,10 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             // Escape or a new request while deciding: do nothing.
             guard self.isCurrentContextPreparation(preparation) else { return }
             self.contextPreparationTask = nil
+            #if BIBBLES_DEVELOPER
+            // The router's thinking level for a deep answer (used only by deep requests).
+            if let effort = decision.routerEffort { DeepEffort.current = effort }
+            #endif
             let ran = self.runRouted(decision, intent: intent, transcript: transcript, hereWrite: hereWrite)
             ToolGateLog.shared.recordRouting(decision, text: transcript, finalRoute: ran.route, tier: ran.tier)
         }
@@ -1058,6 +1100,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         case .agentFiles:
             startFilesAgent(transcript, layer: "router")
             return ("agent_files", "agent")
+        case .agentScreen:
+            startScreenAgent(transcript, layer: "router")
+            return ("agent_screen", "agent")
         #endif
         case .unclear:
             return fallBack()
@@ -1115,10 +1160,13 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             if let answer = LocalQuickAnswer.answer(for: transcript) {
                 ToolGateLog.shared.recordLocal(route: .localAnswer, text: transcript, started: localStarted)
                 chatStore.recordExchange(userText: transcript, assistantText: answer)
-                interaction.transition(to: .answer(answer))
-                interaction.setActions()
                 speakLocalAnswerIfNeeded(answer)
-                overlay.showNearCursor()
+                showInSyncWithVoice { [weak self] in
+                    guard let self else { return }
+                    self.interaction.transition(to: .answer(answer))
+                    self.interaction.setActions()
+                    self.overlay.showNearCursor()
+                }
                 return
             }
         case .dictate, .search:
@@ -1188,10 +1236,13 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             writeFromScreen(transcript, into: target, apiKey: key)
             return
         }
-        if allowForm, let target = lastExternalApp, !target.isTerminated,
+        // An email asked for in a compose window (even when routed as plain
+        // writing): fill To, Subject and the message body separately.
+        let emailRequest = MailCompose.isEmailRequest(transcript)
+        if allowForm || emailRequest, let target = lastExternalApp, !target.isTerminated,
            let key = ClaudeAPI.apiKey(fallback: configuration.anthropicAPIKey), !key.isEmpty {
             let fields = formScanner.fields(in: target)
-            if fields.count >= 2 {
+            if fields.count >= 2, allowForm || MailCompose.isComposeWindow(labels: fields.map(\.label)) {
                 fillForm(transcript, in: target, fields: fields, apiKey: key)
                 return
             }
@@ -1243,6 +1294,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
     }
 
     private func submitFromChat(_ text: String, documents: [ChatDocument], searchWeb: Bool = false) -> Bool {
+        #if BIBBLES_DEVELOPER
+        DeepEffort.current = .medium   // chat messages don't go through the router
+        #endif
         pendingVisualQuestion = nil
         let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty || !documents.isEmpty else { return false }
@@ -1297,6 +1351,9 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
 
     @discardableResult
     private func submitFocusedQuestion(_ transcript: String) -> Bool {
+        #if BIBBLES_DEVELOPER
+        DeepEffort.current = .medium   // circled questions don't go through the router
+        #endif
         guard let capture = focusCaptureTask else { return false }
         focusCaptureTask = nil
         let point = focusPoint
@@ -1657,9 +1714,12 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
                 } else {
                     speakLocalAnswerIfNeeded(answer.answer)
                     chatStore.recordExchange(userText: question, assistantText: answer.answer)
-                    interaction.transition(to: .answer(shownAnswer))
-                    interaction.modelLabel = ClaudeAPI.answeredByLabel() ?? ClaudeAPI.taskLabel(for: answer.model)
-                    overlay.showNearCursor(avoiding: targetHighlight.visibleBounds)
+                    showInSyncWithVoice { [weak self] in
+                        guard let self else { return }
+                        self.interaction.transition(to: .answer(shownAnswer))
+                        self.interaction.modelLabel = ClaudeAPI.answeredByLabel() ?? ClaudeAPI.taskLabel(for: answer.model)
+                        self.overlay.showNearCursor(avoiding: self.targetHighlight.visibleBounds)
+                    }
                 }
             } catch {
                 guard !Task.isCancelled else { return }
@@ -2124,6 +2184,38 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
         voiceReply.playThinkingCue()
     }
 
+    /// A spoken answer: show the card when its voice starts, so text and voice
+    /// begin together. Not spoken (typed, voice off): show it now. If the
+    /// voice fails or is slow, the text shows after 2.5 s anyway; Escape or a
+    /// new question (voice stopped) drops a held answer.
+    private func showInSyncWithVoice(_ show: @escaping () -> Void) {
+        guard voiceReply.isActive, !voiceReply.hasStartedCurrent, stoppedWaitingFor != voiceReply.generationID else {
+            heldAnswer = nil
+            heldAnswerTimeout?.cancel()
+            heldAnswerTimeout = nil
+            show()
+            return
+        }
+        // The latest version of the answer wins (streamed updates).
+        heldAnswer = (show, voiceReply.generationID)
+        guard heldAnswerTimeout == nil else { return }
+        heldAnswerTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.stoppedWaitingFor = self.voiceReply.generationID
+            self.releaseHeldAnswer()
+        }
+    }
+
+    private func releaseHeldAnswer() {
+        heldAnswerTimeout?.cancel()
+        heldAnswerTimeout = nil
+        guard let held = heldAnswer else { return }
+        heldAnswer = nil
+        guard held.voice == voiceReply.generationID else { return }
+        held.show()
+    }
+
     private func speakLocalAnswerIfNeeded(_ answer: String) {
         guard shouldSpeakNextAnswer else { return }
         shouldSpeakNextAnswer = false
@@ -2412,14 +2504,117 @@ final class BibblesApplicationDelegate: NSObject, NSApplicationDelegate, NSMenuD
             guard let self else { return }
             self.chatStore.recordExchange(userText: transcript, assistantText: summary)
             self.interaction.modelLabel = label
-            if speak { self.voiceReply.speak(summary) }
+            if speak { self.voiceReply.speak(AgentSpeech.short(summary)) }
+            self.showAgentResult(summary)
         }
-        agentPanel.show(session)
+        activeFilesSession = session
+        activeScreenSession = nil
+        AgentRobotController.shared.follow(session)
+        AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        AgentRobotController.shared.onHide = { [weak self] in self?.agentPanel.hideCard() }
+        agentPanel.attach(session)
         session.start()
+    }
+
+    /// The Screen agent works in the app the user was in (never in Bibbles).
+    private func startScreenAgent(_ transcript: String, layer: String) {
+        pendingVisualQuestion = nil
+        beginTaskConversationIfNeeded(for: transcript)
+        let speak = shouldSpeakNextAnswer && voiceRepliesEnabled
+        shouldSpeakNextAnswer = false
+        voiceReply.stop()
+        dismissTask?.cancel()
+        overlay.hide()
+        let session = ScreenAgentSession(text: transcript, app: lastExternalApp, inserter: textInserter, layer: layer)
+        let label = session.strings.label
+        session.onFinished = { [weak self] summary in
+            guard let self else { return }
+            self.chatStore.recordExchange(userText: transcript, assistantText: summary)
+            self.interaction.modelLabel = label
+            if speak { self.voiceReply.speak(AgentSpeech.short(summary)) }
+            self.showAgentResult(summary)
+        }
+        // Asked by voice: say when it waits, so "continue" can be said back.
+        session.onWaiting = { [weak self, weak session] in
+            guard speak, let self, let session else { return }
+            if let ask = session.pendingConfirmation {
+                self.voiceReply.speak("Bibbles needs your OK: \(ask). Say continue or stop.")
+            } else {
+                self.voiceReply.speak(session.round == 1 ? "Ready. Say continue to start, or stop." : "Ready for the next part. Say continue.")
+            }
+        }
+        activeScreenSession = session
+        activeFilesSession = nil
+        AgentRobotController.shared.follow(session)
+        AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        AgentRobotController.shared.onHide = { [weak self] in self?.agentPanel.hideCard() }
+        agentPanel.attach(session)
+        session.start()
+    }
+
+    /// "stop" / "continue" said while an agent task is open. Anything else is a new request.
+    private func handleAgentVoiceCommand(_ transcript: String) -> Bool {
+        guard let command = AgentVoiceCommand.parse(transcript) else { return false }
+        var handled = false
+        if let session = activeScreenSession, session.isActive {
+            handled = session.handle(command)
+        } else if let session = activeFilesSession {
+            handled = session.handle(command)
+        }
+        guard handled else { return false }
+        shouldSpeakNextAnswer = false
+        voiceReply.stop()
+        dismissTask?.cancel()
+        overlay.hide()
+        return true
+    }
+
+    /// The robot disappears when an agent is done: with the card closed, the
+    /// result shows in Bibbles' answer card (Undo stays in task history and the menu).
+    private func showAgentResult(_ summary: String) {
+        guard !agentPanel.isVisible else { return }
+        interaction.transition(to: .transcript(summary, isFinal: true))
+        overlay.showNearCursor()
+        scheduleDismissal(afterNanoseconds: 6_000_000_000)
+    }
+
+    /// A task typed or said in the robot's card: always an agent task (no router).
+    /// Organising files goes to the Files agent; everything else to the Screen agent.
+    private func startAgentFromRobot(_ task: String) {
+        let text = task.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        if AgentSettings.filesEnabled, FilesAgentDetector.isRequest(text) || !AgentSettings.screenEnabled {
+            startFilesAgent(text, layer: "robot")
+        } else if AgentSettings.screenEnabled {
+            startScreenAgent(text, layer: "robot")
+        } else {
+            interaction.transition(to: .failed("Turn on AI Agents in Settings → Developer to give the robot tasks."))
+            interaction.setActions()
+            overlay.showNearCursor()
+        }
+    }
+
+    /// The robot's mic: tap to listen, tap again to start the task.
+    private func toggleRobotVoice() {
+        if agentPanel.entry.listening {
+            handle(.pushToTalkEnded)
+        } else {
+            robotVoiceStarted = Date()
+            agentPanel.entry.listening = true
+            handle(.pushToTalkBegan)
+        }
+    }
+
+    @objc private func showAgentRobot() {
+        AgentRobotController.shared.showIdle()
+        agentPanel.present()
     }
 
     @objc private func undoLastAgentTask() {
         guard let session = AgentUndoRegistry.shared.latest else { return }
+        AgentRobotController.shared.follow(session)
+        AgentRobotController.shared.onClick = { [weak self] in self?.agentPanel.toggle() }
+        AgentRobotController.shared.onHide = { [weak self] in self?.agentPanel.hideCard() }
         agentPanel.show(session)
         session.undo()
     }

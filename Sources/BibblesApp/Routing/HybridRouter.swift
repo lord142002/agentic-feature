@@ -17,6 +17,8 @@ enum HybridRoute: String, CaseIterable, Codable {
     #if BIBBLES_DEVELOPER
     /// The Files agent (developer builds, only with "AI Agents (Files)" on).
     case agentFiles = "agent_files"
+    /// The Screen agent (developer builds, only with "AI Agents (Screen)" on).
+    case agentScreen = "agent_screen"
     #endif
     case unclear
 }
@@ -52,6 +54,31 @@ struct RouterFlags: Equatable {
 struct RouterResult: Equatable {
     let route: HybridRoute
     let confidence: Double
+    /// How hard a deep task should think (Local mode routers only; nil = not given or unsure).
+    var effort: DeepEffort? = nil
+}
+
+/// The thinking level for deep tasks, chosen per request by the router (Local
+/// mode). Only "low" and "medium"; anything unsure stays "medium". Used only by
+/// deep requests: light tasks, agents and the router ignore it.
+enum DeepEffort: String, CaseIterable {
+    case low, medium
+
+    private static let lock = NSLock()
+    private static var stored = DeepEffort.medium
+
+    /// The level for the next deep request. Every new request resets it first.
+    static var current: DeepEffort {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
+
+    /// The router's level is used only when the router was sure enough of it.
+    static func from(_ name: String?, probability: Double = 1) -> DeepEffort? {
+        guard let name, let effort = DeepEffort(rawValue: name.trimmingCharacters(in: .whitespaces).lowercased()),
+              probability >= HybridRouter.acceptThreshold else { return nil }
+        return effort
+    }
 }
 
 /// Where the final route came from (developer log).
@@ -76,6 +103,8 @@ struct RoutingDecision: Equatable {
     var keywordStrength: IntentRouter.Strength
     var routerRoute: HybridRoute?
     var routerConfidence: Double?
+    /// The router's deep-task effort (Local mode), nil when not given or unsure.
+    var routerEffort: DeepEffort?
     var routerMilliseconds: Int?
     var jsonParsed: Bool?
     /// Developer-only reason, never the user's words.
@@ -102,6 +131,92 @@ enum HybridRouter {
     static let liveTimeout: TimeInterval = 1.0
     /// Through the Bibbles server there is one more hop, so a little longer.
     static let serverTimeout: TimeInterval = 1.5
+    #if BIBBLES_DEVELOPER
+    /// While an agent is on, the router decides every request.
+    static let agentsTimeout: TimeInterval = 2.5
+    /// Router through OpenRouter (Jev Router, Local mode only).
+    static let openRouterTimeout: TimeInterval = 8
+    static let openRouterURL = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
+
+    static let decisionsURL = URL(string: "https://openrouter.ai/api/alpha/decisions")!
+
+    /// Jev (OpenRouter's Decisions API): one Choice question whose options are the
+    /// routes, described exactly as in the router prompt (agent routes included when on).
+    static func decisionsBody(model: String, text: String, flags: RouterFlags) -> [String: Any] {
+        let prompt = RouterPrompt.system
+        var routes: [String: String] = [:]
+        var rules: [String] = []
+        for line in prompt.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("- ") { rules.append(String(trimmed.dropFirst(2))); continue }
+            guard let colon = trimmed.firstIndex(of: ":"),
+                  let route = HybridRoute(rawValue: String(trimmed[..<colon])) else { continue }
+            routes[route.rawValue] = trimmed[trimmed.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+        }
+        let flagFacts: Any = flags.json.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) }
+            ?? ([:] as [String: Any])
+        return [
+            "model": model,
+            "state": ["request": String(text.prefix(4_000)), "mac": flagFacts] as [String: Any],
+            "questions": [
+                // Asked in the same call; Jev answers each question on its own.
+                "effort": [
+                    "type": "choice",
+                    "instructions": "If this request needs a careful written answer, how much thinking does it need? "
+                        + "Pick low only when the answer is clearly simple.",
+                    "criteria": [
+                        "low": "Simple: describe or explain what is visible on screen, a definition, a short fact, a summary, "
+                            + "a straightforward explanation or rewrite.",
+                        "medium": "Needs careful reasoning: multi-step maths or logic, debugging code, comparisons, analysis, "
+                            + "planning, or anything where a mistake is likely without thinking."
+                    ]
+                ] as [String: Any],
+                "route": [
+                    "type": "choice",
+                    "instructions": "Bibbles is a voice and text assistant for Mac. Which single task does the user want Bibbles to do NOW? "
+                        + "The request is often transcribed speech, in any language, and the real request is often at the end. "
+                        + "`mac` holds true/false facts about the user's Mac. Rules: " + rules.joined(separator: " "),
+                    "criteria": routes
+                ] as [String: Any]
+            ]
+        ]
+    }
+
+    /// Jev's answer: the chosen route and its probability (not Jev's "confidence",
+    /// which measures how spread out all the options are).
+    static func parseDecision(_ data: Data) -> RouterResult? {
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let answer = (object["answers"] as? [String: Any])?["route"] as? [String: Any],
+              let name = answer["choice"] as? String,
+              let route = HybridRoute(rawValue: name) else { return nil }
+        let probability = ((answer["probabilities"] as? [String: Any])?[name] as? NSNumber)?.doubleValue
+            ?? (answer["confidence"] as? NSNumber)?.doubleValue ?? 0
+        guard probability.isFinite else { return nil }
+        let answers = object["answers"] as? [String: Any]
+        let effortAnswer = answers?["effort"] as? [String: Any]
+        let effortName = effortAnswer?["choice"] as? String
+        let effortProbability = effortName.flatMap { ((effortAnswer?["probabilities"] as? [String: Any])?[$0] as? NSNumber)?.doubleValue }
+            ?? (effortAnswer?["confidence"] as? NSNumber)?.doubleValue ?? 0
+        return RouterResult(route: route, confidence: min(1, max(0, probability)),
+                            effort: DeepEffort.from(effortName, probability: effortProbability))
+    }
+
+    /// OpenRouter's chat format: no pre-filled answer, so the JSON is asked for instead.
+    static func openRouterBody(model: String, text: String, flags: RouterFlags) -> [String: Any] {
+        [
+            "model": model,
+            // Room for a model that thinks first; the answer itself is tiny.
+            "max_tokens": 1_000,
+            "messages": [
+                ["role": "system", "content": RouterPrompt.system
+                    + "\nReply with the JSON object only: {\"route\":\"…\",\"confidence\":0.0-1.0}."],
+                ["role": "user", "content": RouterPrompt.userMessage(text: text, flags: flags)]
+            ],
+            "response_format": ["type": "json_object"],
+            "usage": ["include": true]
+        ]
+    }
+    #endif
 
     /// Developer toggle, default ON.
     static var isEnabled: Bool {
@@ -150,6 +265,17 @@ enum HybridRouter {
         let words = improvements ? RoutingText.wordCount(text) : text.split(whereSeparator: { $0.isWhitespace }).count
         let clauses = improvements ? clauseRoutes(for: text, flags: flags, intentRouter: intentRouter) : []
         let today = baselineRoute(for: text, flags: flags, intentRouter: intentRouter)
+        #if BIBBLES_DEVELOPER
+        // With an agent on, the AI router decides every request (however it is
+        // phrased). Keywords keep only the trivial ones: the time and date,
+        // and greetings.
+        if AgentSettings.filesEnabled || AgentSettings.screenEnabled {
+            let gate = ToolGate.classify(text)
+            if gate.route == .localAnswer { return .keep(decision.strength) }
+            if gate.route == .simple, gate.reason == "greeting" { return .keep(.none) }
+            return .unclear("agents on: router decides")
+        }
+        #endif
 
         switch decision.strength {
         case .strong:
@@ -284,6 +410,11 @@ enum HybridRouter {
                        useRouter: Bool = true,
                        improvements: Bool = keywordImprovementsEnabled) async -> RoutingDecision {
         let started = Date()
+        var timeout = timeout
+        #if BIBBLES_DEVELOPER
+        // Every request depends on the router while an agent is on: give it time.
+        if AgentSettings.filesEnabled || AgentSettings.screenEnabled { timeout = max(timeout, agentsTimeout) }
+        #endif
         let strength = intentRouter.decide(transcript: text, mode: .command).strength
         var decision: RoutingDecision
         switch keywordVerdict(for: text, flags: flags, intentRouter: intentRouter, improvements: improvements) {
@@ -298,12 +429,20 @@ enum HybridRouter {
             if !useRouter {
                 decision.reason = "router off"
             } else if let client = await RouterClient.resolve(client) {
-                let outcome = await client.classify(text: text, flags: flags,
-                                                    timeout: client.viaServer ? max(timeout, serverTimeout) : timeout)
+                let base = client.viaServer ? max(timeout, serverTimeout) : timeout
+                #if BIBBLES_DEVELOPER
+                // Jev Router passes the request on to the model it picks: give it longer.
+                // (Jev itself decides directly and keeps the normal limit.)
+                let limit = client.openRouterModel != nil && !client.usesDecisionsAPI ? max(base, openRouterTimeout) : base
+                #else
+                let limit = base
+                #endif
+                let outcome = await client.classify(text: text, flags: flags, timeout: limit)
                 decision.routerMilliseconds = outcome.milliseconds
                 decision.jsonParsed = outcome.jsonParsed
                 decision.routerRoute = outcome.result?.route
                 decision.routerConfidence = outcome.result?.confidence
+                decision.routerEffort = outcome.result?.effort
                 if let accepted = accept(outcome.result) {
                     decision.source = .router
                     decision.override = accepted
@@ -326,6 +465,7 @@ enum HybridRouter {
         #if BIBBLES_DEVELOPER
         // The Files agent route exists only while its developer toggle is on.
         if result.route == .agentFiles, !AgentSettings.filesEnabled { return nil }
+        if result.route == .agentScreen, !AgentSettings.screenEnabled { return nil }
         #endif
         return result.route
     }
@@ -349,7 +489,8 @@ enum HybridRouter {
             let confidence = (object["confidence"] as? NSNumber)?.doubleValue
                 ?? Double(object["confidence"] as? String ?? "") ?? 0
             guard confidence.isFinite else { return nil }
-            return RouterResult(route: route, confidence: min(1, max(0, confidence)))
+            return RouterResult(route: route, confidence: min(1, max(0, confidence)),
+                                effort: DeepEffort.from(object["effort"] as? String))
         }
         // Last resort: pull both fields out with patterns (broken JSON).
         guard let routeMatch = text.range(of: #"(?i)"?route"?\s*[:=]\s*"?([a-z_]+)"#, options: .regularExpression) else { return nil }
@@ -420,6 +561,10 @@ struct RouterClient {
     /// Developer builds only: the developer's own Anthropic key (empty when
     /// the request goes to the server).
     var key = ""
+    /// Local mode with an OpenRouter router model (Jev or Jev Router): `key` is the OpenRouter key.
+    var openRouterModel: String?
+    /// Jev itself: OpenRouter's Decisions API (Jev picks the route, no other model involved).
+    var usesDecisionsAPI: Bool { openRouterModel.map { $0.hasPrefix("typesafe/jev-1") || $0 == "~typesafe/jev-latest" } ?? false }
     #endif
 
     /// Customer builds always go through the Bibbles server.
@@ -445,6 +590,14 @@ struct RouterClient {
     /// The developer's own Anthropic key (Settings → Developer → API keys);
     /// nil without one.
     static func developer() -> RouterClient? {
+        // Local mode with Jev or Jev Router picked (Settings → Developer → Models): the OpenRouter key.
+        let choice = ModelCatalog.selected(.router)
+        if LocalMode.isOn, choice.provider == .openrouter {
+            guard let key = DeveloperKeychain.read(.openrouter), !key.isEmpty else { return nil }
+            var client = RouterClient(key: key)
+            client.openRouterModel = choice.id
+            return client
+        }
         guard let key = DeveloperKeychain.read(.anthropic), !key.isEmpty else { return nil }
         return RouterClient(key: key)
     }
@@ -467,6 +620,18 @@ struct RouterClient {
     }
 
     func urlRequest(text: String, flags: RouterFlags) throws -> URLRequest {
+        #if BIBBLES_DEVELOPER
+        if serverToken == nil, let model = openRouterModel {
+            var request = URLRequest(url: usesDecisionsAPI ? HybridRouter.decisionsURL : HybridRouter.openRouterURL)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "content-type")
+            request.setValue("Bearer " + key, forHTTPHeaderField: "authorization")
+            let body = usesDecisionsAPI ? HybridRouter.decisionsBody(model: model, text: text, flags: flags)
+                : HybridRouter.openRouterBody(model: model, text: text, flags: flags)
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            return request
+        }
+        #endif
         let body = try JSONSerialization.data(withJSONObject: HybridRouter.requestBody(text: text, flags: flags))
         #if BIBBLES_DEVELOPER
         if serverToken == nil {
@@ -507,7 +672,22 @@ struct RouterClient {
             guard (200..<300).contains(status) else {
                 return RouterOutcome(result: nil, milliseconds: elapsed(), jsonParsed: false, failure: "http \(status)")
             }
-            guard let reply = ClaudeAPI.responseText(from: data), let result = HybridRouter.parse(reply) else {
+            #if BIBBLES_DEVELOPER
+            // Cost log: which model Jev Router picked, and what it cost.
+            if let model = openRouterModel {
+                LocalCostLog.shared.recordRouter(model: model, reply: data, milliseconds: elapsed())
+            } else if serverToken == nil {
+                // Haiku with the developer's Anthropic key: logged too (log only, nothing else changes).
+                LocalCostLog.shared.recordAnthropicRouter(model: HybridRouter.model, reply: data, milliseconds: elapsed())
+            }
+            #endif
+            #if BIBBLES_DEVELOPER
+            let decided = usesDecisionsAPI ? HybridRouter.parseDecision(data)
+                : ClaudeAPI.responseText(from: data).flatMap(HybridRouter.parse)
+            #else
+            let decided = ClaudeAPI.responseText(from: data).flatMap(HybridRouter.parse)
+            #endif
+            guard let result = decided else {
                 return RouterOutcome(result: nil, milliseconds: elapsed(), jsonParsed: false, failure: "json")
             }
             return RouterOutcome(result: result, milliseconds: elapsed(), jsonParsed: true, failure: nil)
@@ -525,6 +705,8 @@ struct RouterClient {
     /// Opens the connection early (free endpoint) so the first real request
     /// doesn't pay for the TLS handshake.
     func warmUp() async {
+        // OpenRouter: no free endpoint worth calling; the first request opens the connection.
+        guard openRouterModel == nil else { return }
         var request = URLRequest(url: HybridRouter.modelsURL)
         request.setValue(key, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")

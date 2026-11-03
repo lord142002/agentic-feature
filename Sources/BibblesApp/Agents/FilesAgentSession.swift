@@ -162,6 +162,27 @@ final class FilesAgentSession: ObservableObject, Identifiable {
         onFinished?(summary)
     }
 
+    // MARK: Voice
+
+    /// "stop" / "continue" said while the task waits or runs. Returns true when handled.
+    func handle(_ command: AgentVoiceCommand) -> Bool {
+        switch (command, phase) {
+        case (.proceed, .preview):
+            guard !preview.isEmpty else { return false }
+            confirm()
+            return true
+        case (.stop, .running):
+            stop()
+            return true
+        case (.stop, .scanning), (.stop, .planning), (.stop, .preview):
+            cancel()
+            phase = .failed(strings.stopped(0, preview.operations.count))
+            return true
+        default:
+            return false
+        }
+    }
+
     // MARK: Undo
 
     /// Undo stays available for 30 minutes (here and in task history).

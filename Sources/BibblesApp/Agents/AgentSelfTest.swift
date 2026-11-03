@@ -38,6 +38,19 @@ enum AgentSelfTest {
         result.destinationFolders = [URL(fileURLWithPath: "/a"), URL(fileURLWithPath: "/b"), URL(fileURLWithPath: "/c")]
         check("English summary", FilesAgentStrings.english.summary(result) == "Moved 362 files into 3 folders. 40 files are in the Trash.")
 
+        // Screen agent (no app is touched)
+        check("screen: never press Sign up", ScreenSafety.blockedWord(in: "Sign up") != nil && ScreenSafety.blockedWord(in: "Save") == nil)
+        check("screen: email label", MyDetailsMatcher.key(forLabel: "E-Mail") == .email)
+        check("screen: never fill passwords", MyDetailsMatcher.key(forLabel: "Password") == nil)
+        check("screen: PIN code is a postal code", MyDetailsMatcher.key(forLabel: "PIN code") == .postalCode)
+        check("screen: details fill detected", ScreenAgentDetector.isDetailsFill("Fill in this sign-up form with my details"))
+        check("screen: parse export plan",
+              ScreenPlanParser.parse(#"{"summary":"","steps":[{"action":"menu","path":["File","Export as PDF…"]},{"action":"press","target":"Save"}]}"#).plan?.steps.count == 2)
+        var saved = MyDetails()
+        saved.email = "a@b.c"
+        check("screen: AI never sees values", (try? ScreenPlanValidator.resolve("{{email}}", details: saved, request: "").get()) == "a@b.c"
+              && (try? ScreenPlanValidator.resolve("made up", details: saved, request: "").get()) == nil)
+
         // Move, name collision, Stop and Undo in a temporary folder.
         let manager = FileManager.default
         let root = manager.temporaryDirectory.appendingPathComponent("BibblesAgentSelfTest-\(UUID().uuidString)", isDirectory: true)

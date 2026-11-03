@@ -31,6 +31,8 @@ if os.environ.get('DEVELOPER', '0') == '1':
     # Its own bundle id: separate macOS permissions and Keychain items.
     info['CFBundleIdentifier'] = info['CFBundleIdentifier'] + '.dev'
     info['CFBundleName'] = 'Bibbles Dev'
+    # Screen agent: "Use my Contacts card" in Settings → Developer → My details.
+    info['NSContactsUsageDescription'] = 'Bibbles reads your own Contacts card only when you ask it to fill My details for forms.'
 for environment, key in [('BIBBLES_POSTHOG_PROJECT_TOKEN', 'BibblesPostHogProjectToken'),
                          ('BIBBLES_POSTHOG_HOST', 'BibblesPostHogHost')]:
     value = os.environ.get(environment, '').strip()
@@ -48,6 +50,10 @@ mkdir -p "$CONTENTS/Resources"
 for asset in BrandMark.png BrandLogo.png; do
   [ -f "$PROJECT_DIR/Resources/$asset" ] && cp "$PROJECT_DIR/Resources/$asset" "$CONTENTS/Resources/$asset"
 done
+# The agent robot (top-right corner while an agent works): developer builds only, like agents.
+if [ "${DEVELOPER:-0}" = "1" ] && [ -f "$PROJECT_DIR/Resources/AgentRobot.png" ]; then
+  cp "$PROJECT_DIR/Resources/AgentRobot.png" "$CONTENTS/Resources/AgentRobot.png"
+fi
 
 export CLANG_MODULE_CACHE_PATH=${CLANG_MODULE_CACHE_PATH:-/private/tmp/bibbles-clang-cache}
 export SWIFTPM_MODULECACHE_OVERRIDE=${SWIFTPM_MODULECACHE_OVERRIDE:-/private/tmp/bibbles-swiftpm-cache}

@@ -340,7 +340,9 @@ final class FilesAgentTests: XCTestCase {
         for text in ["Clean up my Downloads folder", "Put all PDFs on my Desktop into a folder called Documents 2026",
                      "Organize my screenshots by month", "Move old .dmg installers in Downloads to the Trash",
                      "Limpia mi carpeta de descargas", "Räum meinen Download-Ordner auf", "Downloads folder saaf kar do",
-                     "Range mon dossier Téléchargements", "Organiza a minha pasta de downloads", "ダウンロードフォルダを整理して"] {
+                     "Range mon dossier Téléchargements", "Organiza a minha pasta de downloads", "ダウンロードフォルダを整理して",
+                     "rename all the screenshot image file on my desktop to trip 1 trip 2 trip 3",
+                     "Renombra todas las capturas del escritorio", "Desktop ke screenshots ka sabka naam trip kar do"] {
             XCTAssertTrue(FilesAgentDetector.isRequest(text), text)
         }
         for text in ["How do I organise my desktop?", "Rename report to final", "Move my meeting to Friday",
@@ -365,6 +367,26 @@ final class FilesAgentTests: XCTestCase {
         AgentSettings.testOverride = true
         XCTAssertTrue(RouterPrompt.system.contains("agent_files"))
         XCTAssertEqual(HybridRouter.accept(RouterResult(route: .agentFiles, confidence: 0.99)), .agentFiles)
+    }
+
+    func testFileRequestsGoToTheAIRouterWhileTheAgentIsOn() async {
+        let text = "rename all the screenshot image file on my desktop to trip 1 trip 2 trip 3"
+        AgentSettings.testOverride = false
+        if case .unclear = HybridRouter.keywordVerdict(for: text, flags: RouterFlags()) {
+            XCTFail("agent off: keywords decide, as today")
+        }
+        AgentSettings.testOverride = true
+        XCTAssertEqual(HybridRouter.keywordVerdict(for: text, flags: RouterFlags()), .unclear("agents on: router decides"))
+        // The router's answer is used.
+        struct Agent: RouterTransport {
+            func send(_ request: URLRequest) async throws -> (Data, Int) {
+                (Data(#"{"content":[{"type":"text","text":"agent_files\",\"confidence\":0.93}"}]}"#.utf8), 200)
+            }
+        }
+        let decision = await HybridRouter.decide(text: text, flags: RouterFlags(),
+                                                 client: RouterClient(serverToken: "t", transport: Agent()), timeout: 1)
+        XCTAssertEqual(decision.source, .router)
+        XCTAssertEqual(decision.override, .agentFiles)
     }
 
     func testSummariesAreLocalized() {

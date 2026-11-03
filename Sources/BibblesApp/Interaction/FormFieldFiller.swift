@@ -161,6 +161,30 @@ struct FormFieldScanner {
     }
 }
 
+/// Spots an email request made in a mail compose window (Apple Mail,
+/// Gmail, Outlook), so the recipient, subject and message go into their
+/// own boxes instead of all landing where the cursor is.
+enum MailCompose {
+    /// "write a mail to soham@gmail.com", "email my boss about …".
+    static func isEmailRequest(_ text: String) -> Bool {
+        let lowered = text.lowercased()
+        if lowered.range(of: #"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}"#, options: .regularExpression) != nil { return true }
+        return lowered.range(of: #"\b(e-?mails?|mails?)\b"#, options: .regularExpression) != nil
+    }
+
+    /// True when the boxes include a recipients box and a subject box.
+    static func isComposeWindow(labels: [String]) -> Bool {
+        let names = labels.map {
+            $0.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ":")))
+        }
+        let hasRecipients = names.contains { name in
+            name == "to" || name.hasPrefix("to ") || name.contains("recipient") || name.hasPrefix("send to")
+        }
+        let hasSubject = names.contains { $0.contains("subject") }
+        return hasRecipients && hasSubject
+    }
+}
+
 /// Moves the cursor to each planned field and types the text there.
 @MainActor
 struct FormFieldFiller {
@@ -238,7 +262,7 @@ enum ClaudeFormPlanner {
     mode is "replace" to overwrite the box or "append" to add after its current text.
     Rules:
     - Fill only the boxes the request is about. Never fill search boxes.
-    - Email: put recipients in the To / recipients box as plain email addresses only. Convert spoken forms such as "hr at microsoft dot com" to hr@microsoft.com, and drop words like "mail is" or "send it to". Put the subject in the Subject box without a "Subject:" prefix. Put the message in the body / message box with plain line breaks and no subject line.
+    - Email: put recipients in the To / recipients box as plain email addresses only. Convert spoken forms such as "hr at microsoft dot com" to hr@microsoft.com, and drop words like "mail is" or "send it to". Use only addresses the user said; never invent one, and leave the To box alone when the user gave none. Put the subject in the Subject box without a "Subject:" prefix. Put the message in the body / message box with plain line breaks and no subject line.
     - If the user gives only one detail (for example "mail is hr@x.com" or "subject is leave request"), fill only that box.
     - When asked to write something, write the finished text itself: no introduction, explanation, quotation marks or Markdown. Use square-bracket placeholders such as [Your Name] for details you do not know. Match the user's language.
     - If the request applies to the box with the cursor and no better box fits, use that box.

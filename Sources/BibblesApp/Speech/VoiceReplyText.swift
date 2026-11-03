@@ -47,7 +47,8 @@ enum VoiceReplyText {
     /// Returns stable sentence prefixes for incremental model output. The
     /// unfinished tail stays in the card until the next update arrives.
     /// `quickStart`: the first chunk of an answer may end at a comma or
-    /// similar pause (after at least 25 characters), so speech starts sooner.
+    /// similar pause (after at least 15 characters), or, with no pause near
+    /// the start, after its first few words, so speech starts sooner.
     static func readyChunks(in text: String, final: Bool, limit: Int = 150,
                             quickStart: Bool = false) -> ([String], String) {
         var remaining = text
@@ -57,14 +58,22 @@ enum VoiceReplyText {
             let window = firstChunk ? 90 : limit
             let search = String(remaining.prefix(window))
             var boundary = sentenceEnd(in: remaining, within: window, final: final)
-            if firstChunk, boundary.map({ $0 > 60 }) ?? true {
+            if firstChunk, boundary.map({ $0 > 50 }) ?? true {
                 // A pause mark followed by a space (so "1,000" is never split).
                 let pauses = search.indices.filter { index in
                     let next = search.index(after: index)
                     return ",;:—".contains(search[index]) && next < search.endIndex && search[next] == " "
-                        && search.distance(from: search.startIndex, to: index) >= 25
+                        && search.distance(from: search.startIndex, to: index) >= 15
                 }
-                if let pause = pauses.first { boundary = search.distance(from: search.startIndex, to: pause) }
+                if let pause = pauses.first {
+                    boundary = search.distance(from: search.startIndex, to: pause)
+                } else if remaining.count > 60, final || remaining.count >= window {
+                    // No pause near the start: the first few words (at least four), up to a space.
+                    let head = String(remaining.prefix(45))
+                    if let space = head.lastIndex(of: " "), head[..<space].split(separator: " ").count >= 4 {
+                        boundary = head.distance(from: head.startIndex, to: space) - 1
+                    }
+                }
             }
             firstChunk = false
             if let boundary {

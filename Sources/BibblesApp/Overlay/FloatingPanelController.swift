@@ -149,6 +149,10 @@ final class FloatingPanelController {
 /// text as usual; once the pointer moves further, the card follows it and
 /// whatever was under the click is released without acting.
 final class DraggableCardPanel: NSPanel {
+    /// The agent card's task box takes typing (without bringing Bibbles to the front).
+    var allowsKeyboard = false
+    override var canBecomeKey: Bool { allowsKeyboard || super.canBecomeKey }
+
     private var pressed = false
     private var dragging = false
     private var startPointer = NSPoint.zero

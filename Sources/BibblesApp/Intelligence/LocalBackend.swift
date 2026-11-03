@@ -60,6 +60,19 @@ struct LocalBackend: Backend {
 
     static let lightMaxTokens = 4_096
     static let deepMaxTokens = 8_192
+    /// How hard deep tasks think (all deep requests: chat, streamed chat, screen questions):
+    /// the router's choice for this request, low or medium (medium when unsure). Both
+    /// are below the models' "high" default, so faster and cheaper output.
+    static var deepEffort: String { DeepEffort.current.rawValue }
+
+    /// Anthropic deep request: the effort setting (Sonnet 5.5 keeps adaptive thinking).
+    static func withDeepEffort(_ body: [String: Any]) -> [String: Any] {
+        var body = body
+        var config = body["output_config"] as? [String: Any] ?? [:]
+        config["effort"] = deepEffort
+        body["output_config"] = config
+        return body
+    }
     static let maxImages = 4
     static let maxVisionBytes = 10_000_000
     static let maxAudioBytes = 25_000_000
@@ -83,13 +96,24 @@ struct LocalBackend: Backend {
     func chat(mode: WorkerAPI.Mode, messages: [[String: String]], maxTokens: Int?,
               session: URLSession) async throws -> String {
         let started = Date()
+        if mode == .deep, ModelCatalog.selected(.deep).provider == .openrouter {
+            // An OpenRouter deep model (GPT-6.1 Sol): the OpenRouter key, chat-completion format.
+            let model = ModelCatalog.selected(.deep).id
+            let request = try Self.openRouterChatRequest(model: model, messages: Self.chatMessages(messages),
+                                                         maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: false,
+                                                         search: false, key: Self.key(.openrouter), effort: Self.deepEffort)
+            let data = try await Self.send(request, provider: "OpenRouter", slot: .openrouter, session: session)
+            LocalCostLog.shared.record(feature: "chat deep (\(Self.deepEffort))", model: model, reply: data, started: started)
+            return try WorkerAPI.parseChat(data, mode: mode)
+        }
         if mode == .deep {
             let model = ModelCatalog.selected(.deep).id
-            let body = Self.anthropicBody(model: model, messages: messages,
-                                          maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: false, search: false)
+            let body = Self.withDeepEffort(Self.anthropicBody(model: model, messages: messages,
+                                                              maxTokens: Self.cap(maxTokens, Self.deepMaxTokens),
+                                                              stream: false, search: false))
             let data = try await Self.send(Self.anthropicRequest(body: body, key: Self.key(.anthropic)),
                                            provider: "Anthropic", slot: .anthropic, session: session)
-            LocalCostLog.shared.record(feature: "chat deep", model: model, reply: data, started: started)
+            LocalCostLog.shared.record(feature: "chat deep (\(Self.deepEffort))", model: model, reply: data, started: started)
             return try WorkerAPI.parseChat(data, mode: mode)
         }
         let search = mode == .search
@@ -115,13 +139,24 @@ struct LocalBackend: Backend {
     func chatStream(mode: WorkerAPI.Mode, messages: [[String: String]], maxTokens: Int?,
                     session: URLSession, onUpdate: @MainActor (String) -> Void) async throws -> ChatStreamResult {
         let started = Date()
+        if mode == .deep, ModelCatalog.selected(.deep).provider == .openrouter {
+            let model = ModelCatalog.selected(.deep).id
+            let request = try Self.openRouterChatRequest(model: model, messages: Self.chatMessages(messages),
+                                                         maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: true,
+                                                         search: false, key: Self.key(.openrouter), effort: Self.deepEffort)
+            let result = try await Self.stream(request, provider: "OpenRouter", slot: .openrouter, session: session,
+                                               onUpdate: onUpdate)
+            LocalCostLog.shared.recordLastUsage(feature: "chat deep (\(Self.deepEffort))", model: model, started: started)
+            return result
+        }
         if mode == .deep {
             let model = ModelCatalog.selected(.deep).id
-            let body = Self.anthropicBody(model: model, messages: messages,
-                                          maxTokens: Self.cap(maxTokens, Self.deepMaxTokens), stream: true, search: false)
+            let body = Self.withDeepEffort(Self.anthropicBody(model: model, messages: messages,
+                                                              maxTokens: Self.cap(maxTokens, Self.deepMaxTokens),
+                                                              stream: true, search: false))
             let result = try await Self.stream(Self.anthropicRequest(body: body, key: Self.key(.anthropic), stream: true),
                                                provider: "Anthropic", slot: .anthropic, session: session, onUpdate: onUpdate)
-            LocalCostLog.shared.recordLastUsage(feature: "chat deep", model: model, started: started)
+            LocalCostLog.shared.recordLastUsage(feature: "chat deep (\(Self.deepEffort))", model: model, started: started)
             return result
         }
         let search = mode == .search
@@ -158,12 +193,23 @@ struct LocalBackend: Backend {
         request.removeValue(forKey: "model")
         request.removeValue(forKey: "tier")
         try Self.checkVisionLimits(request)
+        if tier == .deep, ModelCatalog.selected(.deep).provider == .openrouter {
+            let model = ModelCatalog.selected(.deep).id
+            var openRouter = Self.openRouterVisionBody(request, model: model, cap: Self.deepMaxTokens)
+            openRouter["provider"] = Self.privacy
+            openRouter["reasoning"] = ["effort": Self.deepEffort]
+            let data = try await Self.send(Self.openRouterRequest(path: "chat/completions", json: openRouter,
+                                                                  key: Self.key(.openrouter)),
+                                           provider: "OpenRouter", slot: .openrouter, session: session)
+            LocalCostLog.shared.record(feature: "vision deep (\(Self.deepEffort))", model: model, reply: data, started: started)
+            return data
+        }
         if tier == .deep {
             let model = ModelCatalog.selected(.deep).id
-            let anthropic = Self.anthropicVisionBody(request, model: model, cap: Self.deepMaxTokens)
+            let anthropic = Self.withDeepEffort(Self.anthropicVisionBody(request, model: model, cap: Self.deepMaxTokens))
             let data = try await Self.send(Self.anthropicRequest(body: anthropic, key: Self.key(.anthropic)),
                                            provider: "Anthropic", slot: .anthropic, session: session)
-            LocalCostLog.shared.record(feature: "vision deep", model: model, reply: data, started: started)
+            LocalCostLog.shared.record(feature: "vision deep (\(Self.deepEffort))", model: model, reply: data, started: started)
             return data
         }
         return try await Self.withLightBackup(primary: {
@@ -204,7 +250,7 @@ struct LocalBackend: Backend {
     }
 
     /// The same request in chat-completion form: image blocks become data URLs.
-    static func openRouterVisionBody(_ body: [String: Any], model: String) -> [String: Any] {
+    static func openRouterVisionBody(_ body: [String: Any], model: String, cap limit: Int = lightMaxTokens) -> [String: Any] {
         var messages: [[String: Any]] = []
         if let system = body["system"] as? String, !system.isEmpty {
             messages.append(["role": "system", "content": system])
@@ -232,9 +278,11 @@ struct LocalBackend: Backend {
         var result: [String: Any] = [
             "model": model,
             "messages": messages,
-            "max_tokens": cap(body["max_tokens"] as? Int, lightMaxTokens)
+            "max_tokens": cap(body["max_tokens"] as? Int, limit)
         ]
-        if let temperature = body["temperature"] { result["temperature"] = temperature }
+        if let temperature = body["temperature"], ModelCatalog.choice(id: model)?.acceptsTemperature != false {
+            result["temperature"] = temperature
+        }
         return result
     }
 
@@ -372,7 +420,7 @@ struct LocalBackend: Backend {
     }
 
     static func openRouterChatRequest(model: String, messages: [[String: Any]], maxTokens: Int,
-                                      stream: Bool, search: Bool, key: String) throws -> URLRequest {
+                                      stream: Bool, search: Bool, key: String, effort: String? = nil) throws -> URLRequest {
         var body: [String: Any] = [
             "model": model,
             "messages": messages,
@@ -382,6 +430,7 @@ struct LocalBackend: Backend {
             "usage": ["include": true]
         ]
         if search { body["plugins"] = [["id": "web", "max_results": 5]] }
+        if let effort { body["reasoning"] = ["effort": effort] }
         var request = try openRouterRequest(path: "chat/completions", json: body, key: key)
         if stream { request.timeoutInterval = streamTimeout }
         return request
@@ -537,6 +586,43 @@ final class LocalCostLog {
         record(Entry(date: Date(), feature: feature, model: model, inputTokens: usage.input, outputTokens: usage.output,
                      cost: ModelCatalog.estimatedCost(model: model, inputTokens: usage.input, outputTokens: usage.output),
                      milliseconds: Int(Date().timeIntervalSince(started) * 1000)))
+    }
+
+    /// A router call through OpenRouter: the model that really answered and
+    /// OpenRouter's own cost (usage.cost), since the router model's price varies.
+    func recordRouter(model: String, reply: Data, milliseconds: Int) {
+        let object = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
+        let answered = object?["model"] as? String
+        let usage = Self.usage(in: reply)
+        let cost = ((object?["usage"] as? [String: Any])?["cost"] as? NSNumber)?.doubleValue
+        // "typesafe/jev-1.14-20261014" is the dated snapshot of the same model, not another one.
+        let label = answered.map { $0.hasPrefix(model) ? model : model + " → " + $0 } ?? model
+        record(Entry(date: Date(), feature: "router", model: label, inputTokens: usage.input, outputTokens: usage.output,
+                     cost: cost, milliseconds: milliseconds))
+    }
+
+    /// A Haiku router call (Anthropic): the router instructions are cached, so
+    /// cached tokens are priced separately. "In" counts all input tokens.
+    func recordAnthropicRouter(model: String, reply: Data, milliseconds: Int) {
+        let usage = ((try? JSONSerialization.jsonObject(with: reply)) as? [String: Any])?["usage"] as? [String: Any] ?? [:]
+        let tokens = Self.anthropicRouterTokens(usage)
+        record(Entry(date: Date(), feature: "router", model: model, inputTokens: tokens.input, outputTokens: tokens.output,
+                     cost: Self.anthropicRouterCost(usage, model: model), milliseconds: milliseconds))
+    }
+
+    static func anthropicRouterTokens(_ usage: [String: Any]) -> (input: Int?, output: Int?) {
+        func number(_ key: String) -> Int { (usage[key] as? NSNumber)?.intValue ?? 0 }
+        guard usage["input_tokens"] != nil || usage["output_tokens"] != nil else { return (nil, nil) }
+        return (number("input_tokens") + number("cache_creation_input_tokens") + number("cache_read_input_tokens"),
+                number("output_tokens"))
+    }
+
+    /// Anthropic prices: cache writes 1.25×, cache reads 0.1× the input price.
+    static func anthropicRouterCost(_ usage: [String: Any], model: String) -> Double? {
+        guard let choice = ModelCatalog.choice(id: model), usage["input_tokens"] != nil || usage["output_tokens"] != nil else { return nil }
+        func number(_ key: String) -> Double { (usage[key] as? NSNumber)?.doubleValue ?? 0 }
+        let input = number("input_tokens") + 1.25 * number("cache_creation_input_tokens") + 0.1 * number("cache_read_input_tokens")
+        return (input * choice.inputPerMillion + number("output_tokens") * choice.outputPerMillion) / 1_000_000
     }
 
     /// After a stream: the usage it reported.

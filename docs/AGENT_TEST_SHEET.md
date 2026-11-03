@@ -33,3 +33,60 @@ For each test, ask by voice (hold Control + Option) or by typing (double-tap Con
 - **Too big:** a folder with more than 1,000 items asks you to narrow the request. Nothing is scanned further.
 - **No server:** with Local mode on, no request goes to `bibbles-api` (check with a proxy such as Proxyman). The planner request goes to OpenRouter or Anthropic and contains only the request and the folder **summary**. No file contents are sent.
 - **Labels:** the card header says "Agent Task" in the user's language. No model name is shown anywhere outside Settings → Developer.
+
+---
+
+# Screen agent: manual test sheet
+
+**Before you start:**
+1. Turn on **Settings → Developer → AI Agents (Screen)**. Requests other than "fill … with my details" also need **Local mode** and your OpenRouter key.
+2. In **My details**, press **Use my Contacts card**. macOS asks for Contacts access once. Check the fields, then press **Save**.
+3. Bibbles Dev needs **Accessibility** permission.
+
+| # | Where | Say or type | Expected |
+|---|---|---|---|
+| S1 | Safari or Chrome, any sign-up form (for example a newsletter or test-account page) | "Fill in this sign-up form with my details" | The card says **ON THIS MAC · NO AI**. The preview lists "Type “Mohit” into “First name”" and so on. Passwords and card fields are never listed. Start fills them. **Sign up is NOT pressed.** The summary says to press it yourself. |
+| S2 | The same form | Press **Undo** | The typed fields are empty again. |
+| S3 | TextEdit or Pages with a document open | "Click Export and save it as a PDF" | Preview: "Choose File ▸ Export as PDF…", then "Press “Save”", marked "no undo". Start opens the save sheet and presses Save. The PDF appears next to the document. |
+| S4 | Anywhere | "Go to Settings and turn on dark mode" | Preview: one step, turn dark mode on. Start switches dark mode on. Undo switches it back. |
+| S5 | A form with "Remember me" ticked | "Untick remember me" | Preview: "Turn off “Remember me”". Start unticks it. |
+| S6 | A checkout page | "Fill my details and pay" | The details are filled. **Pay** is skipped with "Bibbles never presses …". |
+| S6b | Preview with an image | "Can you please export this to PDF and save it on my Desktop" | Preview: "Choose File ▸ Export as PDF…", then "Save in Desktop". Done shows "Saved holi7.pdf in Desktop" and a **Show in Finder** button. |
+| S6c | TextEdit with a document | "Export this as PDF into my Holi folder and name it holi final" | "Save as “holi final” in Desktop ▸ Holi" (or wherever your Holi folder is). If the folder doesn't exist, the step is skipped unless you said "new folder". |
+| S6d | Repeat S6b | — | macOS asks to **Replace** the existing file. Bibbles stops with "a file with that name already exists". You choose. |
+| S7 | Anywhere | "Where is the Export button?" | **No agent.** Ordinary screen help points at it. |
+| S8 | Turn **AI Agents (Screen)** off and repeat S1 | — | No agent card. Today's form fill runs, using placeholders like [Your Name]. |
+
+**Privacy check:** with a proxy such as Proxyman, S1 sends **no request at all**. S3 sends one planner request with menu and button titles and field labels only. It never contains your details or what is typed in the fields.
+
+## Screen agent: acting on screen (clicks, typing, music, several parts)
+
+Needs **Screen Recording** permission for Bibbles Dev, so the planner can see the screen and click on it.
+
+| # | Where | Say | Expected |
+|---|---|---|---|
+| A1 | A piano website in Safari or Chrome (for example a virtual piano page) | "Make up a happy theme tune and play it on this piano" | Preview: "Play 32 notes (about 12 s)". Start: the keys are clicked in rhythm. Stop halts at once. |
+| A2 | Mail, with a message open | "Reply saying I'll join at 5 and send it" | Part 1 previews the clicks and the typed text, then waits for Start. Before Send: **"Press Send in Mail?"**. Choose Stop to check that nothing is sent. |
+| A3 | Messages, with a conversation open | "Tell Sam I'm on my way" | Preview: type the text, then "Press return (asks you first)". The message is sent only after you confirm. |
+| A4 | Safari | "Search the web for Holi festival 2026 and open the first result" | Part 1: click the address bar, type, Return. "Looking again…". Part 2: click the first result. |
+| A5 | Any app | A request that would need **Empty Trash** or **Log Out** | That step is skipped with "Bibbles never presses …". |
+| A6 | A drum website (keys or clickable pads) | "Play a rock beat on these drums" | Preview: "Play N notes with chords (about N s)". Kick and hi-hat land together. On key-based sites they're exact; on click-only sites they're a few ms apart. |
+| A7 | A virtual guitar website | "Strum a happy chord progression on this guitar" | Preview mentions "strums". The pointer drags across the strings while each chord is held. |
+| A8 | Any app with a slider (for example System Settings → Sound) | "Drag the volume slider to the middle" | Preview: "Drag “…”". It drags only after Start. |
+
+## Screen agent: web pages, scrolling, two apps, files, voice
+
+| # | Where | Say | Expected |
+|---|---|---|---|
+| W1 | Gmail in Chrome, a mail open | "Reply saying thanks, I'll check" | Part 1 clicks the **Reply** nearest to the one on screen (by name, not only by position) and types the text. Developer page → cost log shows the plan. |
+| W2 | A long web page | "Scroll down and click Load more" | Preview: "Scroll down", then "Looking again…". Part 2 clicks **Load more**. |
+| W3 | Gmail, a long thread | "Click Reply on the last message" | The button is scrolled into view first, then pressed. |
+| X1 | A PDF invoice open in Preview | "Take the total from this invoice and email it to soham@gmail.com" | Part 1: "Remember: Total: …" and "Switch to Mail". Part 2 (in Mail): new message, To, Subject, body with the same total. Send asks you first. |
+| X2 | Anywhere | "Open the holi7 file in Downloads and export it to PDF" | Part 1 (no screenshot): "Open “holi7.jpg” from Downloads". Part 2 in Preview: File ▸ Export as PDF… |
+| F1 | Mail, a new message open | "Attach my latest resume from Downloads" | Preview: "Attach “Resume….pdf” from Downloads" (the newest file with "resume" in its name). Start: the file appears as an attachment. |
+| F2 | Gmail compose in Chrome | "Attach my latest resume from Downloads" | Click the paperclip, then the file window opens and Bibbles chooses the file. |
+| F3 | Mail | "Attach my passwords file" when you said only "resume" before | Skipped: "“passwords” wasn't in your request". |
+| Q1 | Anywhere | "Open Safari" / "open youtube.com" | No AI call and no screenshot (cost log: "on this Mac (no AI)"). It opens right away, no Start needed. |
+| Q2 | Anywhere | "Open Terminal" | Nothing opens: Bibbles never works in Terminal. |
+| V1 | During A1 or W2, by voice | "Stop" | The task stops after the current step. No new request starts. |
+| V2 | A preview waiting for Start, by voice | "Continue" (or "go ahead") | Same as pressing Start / Continue. With voice replies on, Bibbles says "Ready. Say continue to start" when it waits, and a short result at the end. |

@@ -15,6 +15,32 @@ enum AgentSettings {
         get { testOverride ?? UserDefaults.standard.bool(forKey: filesKey) }
         set { UserDefaults.standard.set(newValue, forKey: filesKey) }
     }
+
+    static let screenKey = "bibbles.dev.agents.screen"
+    /// Tests only.
+    static var screenTestOverride: Bool?
+
+    /// "AI Agents (Screen)", default OFF.
+    static var screenEnabled: Bool {
+        get { screenTestOverride ?? UserDefaults.standard.bool(forKey: screenKey) }
+        set { UserDefaults.standard.set(newValue, forKey: screenKey) }
+    }
+}
+
+/// The spoken version of an agent's result: the first sentence or two, short.
+enum AgentSpeech {
+    static func short(_ summary: String, limit: Int = 160) -> String {
+        let text = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count > limit else { return text }
+        var spoken = ""
+        text.enumerateSubstrings(in: text.startIndex..., options: .bySentences) { sentence, _, _, stop in
+            guard let sentence else { return }
+            if !spoken.isEmpty, spoken.count + sentence.count > limit { stop = true; return }
+            spoken += sentence
+        }
+        if spoken.isEmpty || spoken.count > limit { spoken = String(text.prefix(limit)) }
+        return spoken.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 /// What the user asked, in their own words and language.
@@ -483,48 +509,94 @@ enum AgentPlanner {
     }
 
     static func plan(system: String, user: String, session: URLSession = .shared) async throws -> Attempt {
+        let (reply, parsed) = try await planned(system: system, user: user,
+                                                models: [ModelCatalog.selected(.agentPlanner), ModelCatalog.selected(.agentBackup)],
+                                                session: session) { text -> AgentParseResult? in
+            let parsed = AgentPlanParser.parse(text)
+            return parsed.isValid ? parsed : nil
+        }
+        return Attempt(reply: reply, parsed: parsed)
+    }
+
+    /// One planning call per model in order (planner, then backup) until one
+    /// returns a plan `parse` accepts; each call is limited to 5 seconds.
+    static func planned<Parsed>(system: String, user: String, models: [ModelChoice],
+                                schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan",
+                                strictSchema: [String: Any]? = nil,
+                                maxTokens: Int = maxOutputTokens, timeLimit: TimeInterval = timeout, image: Data? = nil,
+                                session: URLSession,
+                                parse: (String) -> Parsed?) async throws -> (AgentPlannerReply, Parsed) {
         guard LocalMode.isOn else { throw AgentError.needsLocalMode }
-        var lastProblem = "no reply"
-        for (index, model) in [ModelCatalog.selected(.agentPlanner), ModelCatalog.selected(.agentBackup)].enumerated() {
+        // Each model's own problem, so the card says what really went wrong.
+        var problems: [String] = []
+        for (index, model) in models.enumerated() {
+            let started = Date()
+            var problem: String
             do {
-                let reply = try await withTimeout(timeout) {
-                    try await ask(model: model, system: system, user: user, backup: index > 0, session: session)
+                let reply = try await withTimeout(timeLimit) {
+                    try await ask(model: model, system: system, user: user, backup: index > 0, session: session,
+                                  schema: schema, schemaName: schemaName, strictSchema: strictSchema,
+                                  maxTokens: maxTokens, image: image)
                 }
-                let parsed = AgentPlanParser.parse(reply.text)
-                if parsed.isValid { return Attempt(reply: reply, parsed: parsed) }
-                lastProblem = parsed.error ?? "invalid plan"
+                if let parsed = parse(reply.text) { return (reply, parsed) }
+                problem = "its plan wasn't in the expected format"
             } catch is CancellationError {
                 throw CancellationError()
             } catch AgentError.needsLocalMode {
                 throw AgentError.needsLocalMode
             } catch let error as LocalBackendError {
-                lastProblem = error.localizedDescription
+                problem = error.localizedDescription
             } catch PlannerTimeout.timedOut {
-                lastProblem = "timed out"
+                problem = "no answer within \(Int(timeLimit)) s"
             } catch {
-                lastProblem = "network"
+                problem = "network problem"
             }
+            problems.append("\(model.name): \(problem)")
+            // Failed calls go in the cost log too (no tokens known).
+            LocalCostLog.shared.record(LocalCostLog.Entry(date: Date(), feature: schemaName.replacingOccurrences(of: "_", with: " ")
+                                                          + " FAILED: " + String(problem.prefix(60)), model: model.id,
+                                                          inputTokens: nil, outputTokens: nil, cost: nil,
+                                                          milliseconds: Int(Date().timeIntervalSince(started) * 1000)))
         }
-        throw AgentError.planFailed(lastProblem)
+        throw AgentError.planFailed(problems.isEmpty ? "no reply" : problems.joined(separator: "; "))
     }
 
     static func ask(model: ModelChoice, system: String, user: String, backup: Bool,
-                    session: URLSession) async throws -> AgentPlannerReply {
+                    session: URLSession, schema: [String: Any] = AgentPlanParser.schema,
+                    schemaName: String = "agent_plan", strictSchema: [String: Any]? = nil,
+                    maxTokens: Int = maxOutputTokens, image: Data? = nil) async throws -> AgentPlannerReply {
         let started = Date()
-        let request = try request(model: model, system: system, user: user)
-        let data = try await LocalBackend.send(request, provider: model.provider == .anthropic ? "Anthropic" : "OpenRouter",
-                                               slot: model.provider.keySlot, session: session)
-        guard var text = ClaudeAPI.responseText(from: data) else {
-            throw LocalBackendError.invalidResponse(model.provider == .anthropic ? "Anthropic" : "OpenRouter")
+        let request = try request(model: model, system: system, user: user, schema: schema, schemaName: schemaName,
+                                  strictSchema: strictSchema, maxTokens: maxTokens, image: image)
+        let provider = model.provider == .anthropic ? "Anthropic" : "OpenRouter"
+        let data = try await LocalBackend.send(request, provider: provider, slot: model.provider.keySlot, session: session)
+        guard var text = ClaudeAPI.responseText(from: data), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw emptyReplyProblem(data, provider: provider)
         }
         if prefills(model), !text.trimmingCharacters(in: .whitespaces).hasPrefix("{") { text = "{" + text }
         let usage = LocalCostLog.usage(in: data)
         let reply = AgentPlannerReply(text: text, model: model, milliseconds: Int(Date().timeIntervalSince(started) * 1000),
                                       inputTokens: usage.input, outputTokens: usage.output, usedBackup: backup)
-        LocalCostLog.shared.record(LocalCostLog.Entry(date: Date(), feature: backup ? "agent plan (backup)" : "agent plan",
+        LocalCostLog.shared.record(LocalCostLog.Entry(date: Date(), feature: schemaName.replacingOccurrences(of: "_", with: " ") + (backup ? " (backup)" : ""),
                                                       model: model.id, inputTokens: usage.input, outputTokens: usage.output,
                                                       cost: reply.estimatedCost, milliseconds: reply.milliseconds))
         return reply
+    }
+
+    /// Why a reply had no text: the model ran out of room (often while
+    /// thinking), declined, or something else.
+    static func emptyReplyProblem(_ data: Data, provider: String) -> LocalBackendError {
+        let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        let reason = (object?["stop_reason"] as? String)
+            ?? ((object?["choices"] as? [[String: Any]])?.first?["finish_reason"] as? String) ?? ""
+        switch reason {
+        case "max_tokens", "length":
+            return .provider(name: provider, status: 200, problem: "ran out of room before answering (it spent it thinking)")
+        case "refusal", "content_filter":
+            return .provider(name: provider, status: 200, problem: "declined to answer")
+        default:
+            return .invalidResponse(provider)
+        }
     }
 
     /// Anthropic models without adaptive thinking get a `{` prefill; the
@@ -533,27 +605,54 @@ enum AgentPlanner {
         model.provider == .anthropic && model.acceptsTemperature
     }
 
-    static func request(model: ModelChoice, system: String, user: String) throws -> URLRequest {
+    static func request(model: ModelChoice, system: String, user: String,
+                        schema: [String: Any] = AgentPlanParser.schema, schemaName: String = "agent_plan",
+                        strictSchema: [String: Any]? = nil,
+                        maxTokens: Int = maxOutputTokens, image: Data? = nil) throws -> URLRequest {
         switch model.provider {
         case .openrouter:
+            // A screenshot, when there is one, goes with the text as a data URL.
+            let userContent: Any
+            if let image {
+                userContent = [["type": "text", "text": user],
+                               ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + image.base64EncodedString()]]]
+                    as [[String: Any]]
+            } else {
+                userContent = user
+            }
             var body: [String: Any] = [
                 "model": model.id,
-                "messages": [["role": "system", "content": system], ["role": "user", "content": user]],
-                "max_tokens": maxOutputTokens,
+                "messages": [["role": "system", "content": system], ["role": "user", "content": userContent]],
+                "max_tokens": maxTokens,
                 "provider": LocalBackend.privacy,
                 "reasoning": ["effort": "low"],
-                "response_format": ["type": "json_schema",
-                                    "json_schema": ["name": "agent_plan", "strict": false, "schema": AgentPlanParser.schema]],
                 "usage": ["include": true]
             ]
+            if model.id.hasPrefix("openai/"), let strictSchema {
+                // OpenAI's strict mode: the reply must match the format exactly.
+                body["response_format"] = ["type": "json_schema",
+                                           "json_schema": ["name": schemaName, "strict": true, "schema": strictSchema]]
+            } else if !model.id.hasPrefix("google/") {
+                // Gemini rejects loosely defined formats, so it gets plain JSON instructions only.
+                body["response_format"] = ["type": "json_schema",
+                                           "json_schema": ["name": schemaName, "strict": false, "schema": schema]]
+            }
             if model.acceptsTemperature { body["temperature"] = 0 }
             return try LocalBackend.openRouterRequest(path: "chat/completions", json: body, key: LocalBackend.key(.openrouter))
         case .anthropic:
-            var messages: [[String: Any]] = [["role": "user", "content": user]]
+            let userContent: Any
+            if let image {
+                userContent = [["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": image.base64EncodedString()]],
+                               ["type": "text", "text": user]] as [[String: Any]]
+            } else {
+                userContent = user
+            }
+            var messages: [[String: Any]] = [["role": "user", "content": userContent]]
             if prefills(model) { messages.append(["role": "assistant", "content": "{"]) }
             var body: [String: Any] = [
                 "model": model.id,
-                "max_tokens": maxOutputTokens,
+                // Haiku 5.5 / Sonnet 5.5 may think first: thinking counts toward the limit, so give twice the room.
+                "max_tokens": model.acceptsTemperature ? maxTokens : maxTokens * 2,
                 "system": system,
                 "messages": messages
             ]
