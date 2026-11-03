@@ -1357,7 +1357,9 @@ enum ScreenAX {
     }
 
     static func press(_ element: AXUIElement) -> Bool {
-        AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+        let pressed = AXUIElementPerformAction(element, kAXPressAction as CFString) == .success
+        if pressed { AgentCursor.shared.pulse() }
+        return pressed
     }
 
     // MARK: Save sheets
@@ -1462,12 +1464,15 @@ enum ScreenAX {
     }
 
     static func mouse(at point: CGPoint, down: Bool) {
+        AgentCursor.shared.place(at: point)
+        if down { AgentCursor.shared.pulse() }
         let source = CGEventSource(stateID: .combinedSessionState)
         CGEvent(mouseEventSource: source, mouseType: down ? .leftMouseDown : .leftMouseUp,
                 mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
 
     static func mouseDrag(to point: CGPoint) {
+        AgentCursor.shared.place(at: point)
         let source = CGEventSource(stateID: .combinedSessionState)
         CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: point, mouseButton: .left)?
             .post(tap: .cghidEventTap)
@@ -1483,6 +1488,7 @@ enum ScreenAX {
 
     /// Scrolls whatever is under `point` (wheel events, like a mouse). Negative `dy` scrolls down.
     static func scroll(at point: CGPoint, dx: Int32, dy: Int32) {
+        AgentCursor.shared.place(at: point)
         let source = CGEventSource(stateID: .combinedSessionState)
         CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: point, mouseButton: .left)?
             .post(tap: .cghidEventTap)
@@ -1589,6 +1595,15 @@ enum ScreenAction {
         switch self {
         case .fill: return true
         case .mac(let call): return call.name == "set_dark_mode"
+        default: return false
+        }
+    }
+
+    /// Moves the real pointer (clicks, drags, scrolls, clicked notes), so it is put back afterwards.
+    var usesMouse: Bool {
+        switch self {
+        case .click, .drag, .scroll, .composeEmail: return true
+        case .play(let notes): return notes.contains { !$0.points.isEmpty }
         default: return false
         }
     }
@@ -2238,8 +2253,16 @@ final class ScreenExecutor {
         return false
     }
 
+    /// The red Bibbles pointer glides to where the next action happens.
+    private func aim(at target: CGPoint?) async {
+        guard let target else { return }
+        await AgentCursor.shared.glide(to: target)
+    }
+
     func run(_ actions: [ScreenAction], in app: NSRunningApplication,
              progress: (Int, Int) -> Void) async -> ScreenRunResult {
+        AgentCursor.shared.show()
+        defer { AgentCursor.shared.hide() }
         var result = ScreenRunResult(total: actions.count)
         consecutiveFailures = 0
         lastFailedActionKind = nil
@@ -2253,7 +2276,11 @@ final class ScreenExecutor {
                 if result.firstError == nil { result.firstError = "reached the \(ScreenAgentSession.maxTotalSteps)-step limit" }
                 break
             }
-            if let problem = await perform(action, in: app, result: &result) {
+            // A mouse action moves the real pointer: put it back where the user left it.
+            let userPointer = action.usesMouse ? CGEvent(source: nil)?.location : nil
+            let failure = await perform(action, in: app, result: &result)
+            if let userPointer { CGWarpMouseCursorPosition(userPointer) }
+            if let problem = failure {
                 result.failed += 1
                 recordOutcome(actionKind: action.kindName, failed: true)
                 if result.firstError == nil { result.firstError = problem }
@@ -2286,6 +2313,7 @@ final class ScreenExecutor {
         case .menu(let path):
             guard let item = ScreenAX.menuItem(path, in: app) else { return "couldn't find \(path.joined(separator: " ▸ "))" }
             if let problem = await askFirstIfFinal(ScreenAX.title(item), verb: "Choose", in: app) { return problem }
+            await aim(at: ScreenAX.center(of: item))
             guard ScreenAX.press(item) else { return "couldn't choose \(path.last ?? "")" }
             try? await Task.sleep(nanoseconds: 700_000_000)
         case .press(let title):
@@ -2296,6 +2324,7 @@ final class ScreenExecutor {
             let savingName = ScreenSafety.saveButtons.contains(ScreenAX.normalized(found.control.title))
                 ? ScreenAX.saveSheet(in: app).flatMap { ScreenAX.nameField(in: $0) }.flatMap { ScreenAX.string($0, kAXValueAttribute) } : nil
             let pressedAt = Date()
+            await aim(at: ScreenAX.center(of: found.element))
             guard ScreenAX.press(found.element) else { return "couldn't press “\(title)”" }
             try? await Task.sleep(nanoseconds: 500_000_000)
             // Verify the press landed.
@@ -2328,6 +2357,7 @@ final class ScreenExecutor {
             let finalName = field.flatMap { ScreenAX.string($0, kAXValueAttribute) } ?? name ?? ""
             guard let button = ScreenAX.saveButton(in: ScreenAX.saveSheet(in: app) ?? current) else { return "couldn't find the Save button" }
             let pressedAt = Date()
+            await aim(at: ScreenAX.center(of: button))
             guard ScreenAX.press(button) else { return "couldn't press Save" }
             try? await Task.sleep(nanoseconds: 800_000_000)
             if let problem = await replaceProblem(in: app) { return problem }
@@ -2337,6 +2367,7 @@ final class ScreenExecutor {
                 return "couldn't find “\(title)”"
             }
             if let problem = await askFirstIfFinal(found.control.title, verb: "Switch", in: app) { return problem }
+            await aim(at: ScreenAX.center(of: found.element))
             if found.control.isOn != on, !ScreenAX.press(found.element) { return "couldn't switch “\(title)”" }
             // Verify the toggle changed.
             try? await Task.sleep(nanoseconds: 200_000_000)
@@ -2346,12 +2377,18 @@ final class ScreenExecutor {
             case .unverifiable: break
             }
         case .choose(let title, let option):
-            guard let found = await ScreenAX.findControl(title, roles: ["AXPopUpButton", "AXMenuButton"], in: app, timeout: 2),
-                  ScreenAX.press(found.element) else { return "couldn't open “\(title)”" }
+            guard let found = await ScreenAX.findControl(title, roles: ["AXPopUpButton", "AXMenuButton"], in: app, timeout: 2) else {
+                return "couldn't open “\(title)”"
+            }
+            await aim(at: ScreenAX.center(of: found.element))
+            guard ScreenAX.press(found.element) else { return "couldn't open “\(title)”" }
             try? await Task.sleep(nanoseconds: 350_000_000)
             let items = ScreenAX.children(found.element).flatMap(ScreenAX.children)
-            guard let item = items.first(where: { ScreenAX.normalized(ScreenAX.title($0)) == ScreenAX.normalized(option) }),
-                  ScreenAX.press(item) else { return "couldn't choose “\(option)”" }
+            guard let item = items.first(where: { ScreenAX.normalized(ScreenAX.title($0)) == ScreenAX.normalized(option) }) else {
+                return "couldn't choose “\(option)”"
+            }
+            await aim(at: ScreenAX.center(of: item))
+            guard ScreenAX.press(item) else { return "couldn't choose “\(option)”" }
         case .mailto(let url):
             let opener = NSWorkspace.shared.urlForApplication(toOpen: url)?.standardizedFileURL
             guard opener != nil else { return "there's no mail app set up on this Mac" }
@@ -2367,7 +2404,10 @@ final class ScreenExecutor {
                 if stopRequested { break }
                 // Focus the box, click into it (Mail's message is a web view), then paste.
                 AXUIElementSetAttributeValue(field.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-                if let middle = ScreenAX.center(of: field.element) { ScreenAX.click(at: middle) }
+                if let middle = ScreenAX.center(of: field.element) {
+                    await aim(at: middle)
+                    ScreenAX.click(at: middle)
+                }
                 try? await Task.sleep(nanoseconds: 350_000_000)
                 if !field.value.isEmpty, field.role != "AXWebArea" {
                     inserter.pressSelectAll()
@@ -2379,6 +2419,7 @@ final class ScreenExecutor {
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }
         case .fill(let field, let text):
+            await aim(at: ScreenAX.center(of: field.element))
             let filled = await FormFieldFiller(inserter: inserter).fill([FormFillAction(field: field.id, text: text, replace: true)],
                                                                          fields: [field])
             guard filled == 1 else { return "couldn't type into “\(field.label)”" }
@@ -2402,6 +2443,7 @@ final class ScreenExecutor {
                 if isFinalStep || ScreenSafety.blockedWord(in: name) != nil {
                     guard await confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
                 }
+                await aim(at: ScreenAX.center(of: found.element) ?? point)
                 if ScreenAX.textRoles.contains(found.control.role) {
                     AXUIElementSetAttributeValue(found.element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                     if let middle = ScreenAX.center(of: found.element) { ScreenAX.click(at: middle) }
@@ -2427,6 +2469,7 @@ final class ScreenExecutor {
                 let name = [underneath, label].first { !$0.isEmpty } ?? "this"
                 guard await confirm("Click “\(name)”", app) else { return "you stopped before “\(name)”" }
             }
+            await aim(at: point)
             ScreenAX.click(at: point)
             try? await Task.sleep(nanoseconds: 450_000_000)
         case .type(let text):
@@ -2465,6 +2508,7 @@ final class ScreenExecutor {
                 let name = names.first { !$0.isEmpty } ?? "this"
                 guard await confirm("Drag “\(name)”", app) else { return "you stopped before dragging “\(name)”" }
             }
+            await aim(at: from)
             ScreenAX.click(at: from)
             ScreenAX.mouse(at: from, down: true)
             for step in 1...12 {
@@ -2478,6 +2522,7 @@ final class ScreenExecutor {
             try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
         case .scroll(let at, let dx, let dy):
             guard let spot = at ?? ScreenAX.windowCenter(of: app) else { return "couldn't find the window to scroll" }
+            await aim(at: spot)
             // A few smaller wheel turns, like a mouse, so pages scroll smoothly.
             for _ in 0..<4 {
                 ScreenAX.scroll(at: spot, dx: dx / 4, dy: dy / 4)
@@ -2621,6 +2666,8 @@ final class ScreenExecutor {
     /// Puts typed fields back as they were and dark mode as it was. Clicks
     /// and menu commands can't be undone.
     func undo(_ result: ScreenRunResult, in app: NSRunningApplication) async -> Int {
+        AgentCursor.shared.show()
+        defer { AgentCursor.shared.hide() }
         _ = await bringToFront(app)
         try? await Task.sleep(nanoseconds: 200_000_000)
         var restored = 0
